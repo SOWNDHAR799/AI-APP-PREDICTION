@@ -709,18 +709,27 @@ class AIEngine:
         # Features for TODAY (uses data up to yesterday)
         f_today = self._features(prices, volumes, len(prices)-1)
         
-        if f_tmrw is None or f_today is None: return None
+        # Features for DAY 3 (T+2) 
+        # Simulates momentum carryover by forwarding the last known price
+        p_sim = list(prices) + [prices[-1]]
+        v_sim = list(volumes) + [volumes[-1]]
+        f_day3 = self._features(p_sim, v_sim, len(p_sim))
+        
+        if f_tmrw is None or f_today is None or f_day3 is None: return None
         
         Xs_tmrw = self.scalers[symbol].transform([f_tmrw])
         Xs_today = self.scalers[symbol].transform([f_today])
+        Xs_day3 = self.scalers[symbol].transform([f_day3])
         
-        probs_tmrw = []; probs_today = []
+        probs_tmrw = []; probs_today = []; probs_day3 = []
         for m in self.models[symbol].values():
             probs_tmrw.append(m.predict_proba(Xs_tmrw)[0][1] if hasattr(m,'predict_proba') else float(m.predict(Xs_tmrw)[0]))
             probs_today.append(m.predict_proba(Xs_today)[0][1] if hasattr(m,'predict_proba') else float(m.predict(Xs_today)[0]))
+            probs_day3.append(m.predict_proba(Xs_day3)[0][1] if hasattr(m,'predict_proba') else float(m.predict(Xs_day3)[0]))
             
         up_tmrw = np.clip(np.mean(probs_tmrw) + 0.06*news_sent, 0, 1)
         up_today = np.clip(np.mean(probs_today) + 0.06*news_sent, 0, 1)
+        up_day3 = np.clip(np.mean(probs_day3) + 0.06*news_sent, 0, 1)
         
         dn_tmrw = 1 - up_tmrw; conf_tmrw = max(up_tmrw, dn_tmrw)
         sig_tmrw = 'BUY' if up_tmrw > 0.55 else 'SELL' if dn_tmrw > 0.55 else 'HOLD'
@@ -728,9 +737,13 @@ class AIEngine:
         dn_today = 1 - up_today; conf_today = max(up_today, dn_today)
         sig_today = 'BUY' if up_today > 0.55 else 'SELL' if dn_today > 0.55 else 'HOLD'
         
+        dn_day3 = 1 - up_day3; conf_day3 = max(up_day3, dn_day3)
+        sig_day3 = 'BUY' if up_day3 > 0.55 else 'SELL' if dn_day3 > 0.55 else 'HOLD'
+        
         return {
             'tomorrow': {'signal':sig_tmrw, 'confidence':round(conf_tmrw,4), 'up_prob':round(up_tmrw,4), 'down_prob':round(dn_tmrw,4)},
-            'today': {'signal':sig_today, 'confidence':round(conf_today,4), 'up_prob':round(up_today,4), 'down_prob':round(dn_today,4)}
+            'today': {'signal':sig_today, 'confidence':round(conf_today,4), 'up_prob':round(up_today,4), 'down_prob':round(dn_today,4)},
+            'day3': {'signal':sig_day3, 'confidence':round(conf_day3,4), 'up_prob':round(up_day3,4), 'down_prob':round(dn_day3,4)}
         }
 
 
@@ -1002,35 +1015,40 @@ def page_prediction():
                     sig_cls = {'BUY':'signal-buy','SELL':'signal-sell','HOLD':'signal-hold'}
                     sig_emoji = {'BUY':'🟢 STRONG BUY','SELL':'🔴 SELL','HOLD':'🟡 HOLD'}
                     
-                    tc1, tc2 = st.columns(2)
+                    tc1, tc2, tc3 = st.columns(3)
                     with tc1:
-                        st.markdown(f'<div class="{sig_cls[pred["today"]["signal"]]}">🎯 RECENT SESSION: {sig_emoji[pred["today"]["signal"]]} <br>'
+                        st.markdown(f'<div class="{sig_cls[pred["today"]["signal"]]}">🎯 T (RECENT): {sig_emoji[pred["today"]["signal"]]} <br>'
                                     f'<span style="font-size:0.9rem;font-weight:500;">AI Confidence: {pred["today"]["confidence"]:.1%}</span></div>', unsafe_allow_html=True)
                     with tc2:
-                        st.markdown(f'<div class="{sig_cls[pred["tomorrow"]["signal"]]}">🚀 NEXT OPEN (T+1): {sig_emoji[pred["tomorrow"]["signal"]]} <br>'
+                        st.markdown(f'<div class="{sig_cls[pred["tomorrow"]["signal"]]}">🚀 T+1 (OPEN): {sig_emoji[pred["tomorrow"]["signal"]]} <br>'
                                     f'<span style="font-size:0.9rem;font-weight:500;">AI Confidence: {pred["tomorrow"]["confidence"]:.1%}</span></div>', unsafe_allow_html=True)
+                    with tc3:
+                        st.markdown(f'<div class="{sig_cls[pred["day3"]["signal"]]}">🔮 T+2 (FUTURE): {sig_emoji[pred["day3"]["signal"]]} <br>'
+                                    f'<span style="font-size:0.9rem;font-weight:500;">AI Confidence: {pred["day3"]["confidence"]:.1%}</span></div>', unsafe_allow_html=True)
 
                     st.write("") # Spacer
-                    gc1, gc2, gc_chart = st.columns([1, 1, 2])
-                    with gc1: st.plotly_chart(build_gauge(pred['today']['up_prob'], pred['today']['signal'], "Recent Session"), use_container_width=True)
-                    with gc2: st.plotly_chart(build_gauge(pred['tomorrow']['up_prob'], pred['tomorrow']['signal'], "Next Open"), use_container_width=True)
-                    with gc_chart: 
-                        st.plotly_chart(build_candle_chart(df.tail(60), symbol), use_container_width=True)
-                        res = detect_candle_pattern(df.tail(3))
+                    gc1, gc2, gc3 = st.columns(3)
+                    with gc1: st.plotly_chart(build_gauge(pred['today']['up_prob'], pred['today']['signal'], "T (Recent)"), use_container_width=True)
+                    with gc2: st.plotly_chart(build_gauge(pred['tomorrow']['up_prob'], pred['tomorrow']['signal'], "T+1 (Open)"), use_container_width=True)
+                    with gc3: st.plotly_chart(build_gauge(pred['day3']['up_prob'], pred['day3']['signal'], "T+2 (Future)"), use_container_width=True)
+                    
+                    st.write("")
+                    st.plotly_chart(build_candle_chart(df.tail(60), symbol), use_container_width=True)
+                    res = detect_candle_pattern(df.tail(3))
                         
-                        # Resolve AI vs Technical Conflict for User
-                        ai_sig = pred['tomorrow']['signal']
-                        tech_str = res['advice'].upper() + res['pattern'].upper()
-                        tech_sig = 'SELL' if ('SELL' in tech_str or 'BEARISH' in tech_str or '🔻' in tech_str) else 'BUY' if ('BUY' in tech_str or 'BULLISH' in tech_str) else 'HOLD'
+                    # Resolve AI vs Technical Conflict for User
+                    ai_sig = pred['tomorrow']['signal']
+                    tech_str = res['advice'].upper() + res['pattern'].upper()
+                    tech_sig = 'SELL' if ('SELL' in tech_str or 'BEARISH' in tech_str or '🔻' in tech_str) else 'BUY' if ('BUY' in tech_str or 'BULLISH' in tech_str) else 'HOLD'
                         
-                        if tech_sig != 'HOLD' and tech_sig != ai_sig:
-                            conflict_note = f"⚠️ *Note: The isolated technical pattern is {tech_sig}, but the AI calculates a **{ai_sig}** by including News Sentiment and Volume.*"
-                        elif tech_sig != 'HOLD':
-                            conflict_note = f"✅ *Note: This technical pattern confirms the AI's {ai_sig} prediction.*"
-                        else:
-                            conflict_note = ""
+                    if tech_sig != 'HOLD' and tech_sig != ai_sig:
+                        conflict_note = f"⚠️ *Note: The isolated technical pattern is {tech_sig}, but the AI calculates a **{ai_sig}** by including News Sentiment and Volume.*"
+                    elif tech_sig != 'HOLD':
+                        conflict_note = f"✅ *Note: This technical pattern confirms the AI's {ai_sig} prediction.*"
+                    else:
+                        conflict_note = ""
 
-                        st.info(f"**Technical Indicator (Candle):** {res['pattern']} \n\n **Basic Strategy:** {res['advice']} \n\n {conflict_note}")
+                    st.info(f"**Technical Indicator (Candle):** {res['pattern']} \n\n **Basic Strategy:** {res['advice']} \n\n {conflict_note}")
                     
                     st.subheader("🤖 Model Accuracy")
                     mc1,mc2,mc3 = st.columns(3)
