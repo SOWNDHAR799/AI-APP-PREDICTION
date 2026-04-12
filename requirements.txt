@@ -6,5 +6,4 @@ plotly
 yfinance
 requests
 beautifulsoup4
-lxml
-python-dateutil
+scipy

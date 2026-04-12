@@ -16,7 +16,6 @@ import urllib.request
 import xml.etree.ElementTree as ET
 import urllib.parse
 from bs4 import BeautifulSoup
-import concurrent.futures
 warnings.filterwarnings('ignore')
 
 st.set_page_config(page_title="AI Market Predictor Pro", page_icon="🧠", layout="wide",
@@ -106,8 +105,7 @@ STOCK_MAP = {
     # ═══ IT & SOFTWARE ═══
     'MPHASIS': 'MPHASIS.NS', 'COFORGE': 'COFORGE.NS',
     'PERSISTENT': 'PERSISTENT.NS', 'HAPPSTMNDS': 'HAPPSTMNDS.NS',
-    'ZOMATO': 'ETERNAL.NS', 'ZOMOTA': 'ETERNAL.NS', 'ETERNAL': 'ETERNAL.NS',
-    'PAYTM': 'PAYTM.NS',
+    'ZOMATO': 'ZOMATO.NS', 'PAYTM': 'PAYTM.NS',
     'NAUKRI': 'NAUKRI.NS', 'INFOEDGE': 'NAUKRI.NS',
     'ROUTE': 'ROUTE.NS', 'MAPMY': 'MAPMYINDIA.NS',
     'LATENTVIEW': 'LATENTVIEW.NS', 'NEWGEN': 'NEWGEN.NS',
@@ -163,7 +161,7 @@ STOCK_MAP = {
     'RELAXO': 'RELAXO.NS', 'PAGEIND': 'PAGEIND.NS',
     'TRENT': 'TRENT.NS', 'DMART': 'DMART.NS',
     'DEVYANI': 'DEVYANI.NS', 'JUBLFOOD': 'JUBLFOOD.NS',
-    'ZOMATO': 'ETERNAL.NS', 'ETERNAL': 'ETERNAL.NS', 'SWIGGY': 'SWIGGY.NS',
+    'ZOMATO': 'ZOMATO.NS', 'SWIGGY': 'SWIGGY.NS',
     'PATANJALI': 'PATANJALI.NS',
 
     # ═══ CEMENT & CONSTRUCTION ═══
@@ -251,7 +249,7 @@ STOCK_MAP = {
     'TATA CONSUMER': 'TATACONSUM.NS', 'TATA COMM': 'TATACOMM.NS',
 
     # ═══ NEW-AGE TECH / STARTUPS ═══
-    'ZOMATO': 'ETERNAL.NS', 'ETERNAL': 'ETERNAL.NS', 'PAYTM': 'PAYTM.NS',
+    'ZOMATO': 'ZOMATO.NS', 'PAYTM': 'PAYTM.NS',
     'NYKAA': 'NYKAA.NS', 'POLICYBZR': 'POLICYBZR.NS',
     'CARTRADE': 'CARTRADE.NS', 'DELHIVERY': 'DELHIVERY.NS',
     'MAPMYINDIA': 'MAPMYINDIA.NS',
@@ -286,7 +284,7 @@ DASHBOARD_CATEGORIES = {
     '💻 IT & Software': ['TCS', 'INFY', 'WIPRO', 'HCLTECH', 'TECHM', 'LTIM', 'LTTS',
                           'MPHASIS', 'COFORGE', 'PERSISTENT', 'HAPPSTMNDS', 'KPITTECH',
                           'MASTEK', 'ZENSAR', 'BIRLASOFT', 'CYIENT', 'SONATSOFTW', 'TATAELXSI'],
-    '📱 New-Age Tech': ['ZOMATO', 'ETERNAL', 'PAYTM', 'NYKAA', 'POLICYBZR', 'DELHIVERY', 'CARTRADE', 'MAPMYINDIA', 'NAZARA'],
+    '📱 New-Age Tech': ['ZOMATO', 'PAYTM', 'NYKAA', 'POLICYBZR', 'DELHIVERY', 'CARTRADE', 'MAPMYINDIA', 'NAZARA'],
     '💊 Pharma': ['SUNPHARMA', 'DRREDDY', 'CIPLA', 'DIVISLAB', 'LUPIN', 'AUROPHARMA',
                    'BIOCON', 'TORNTPHARM', 'ALKEM', 'IPCALAB', 'GLENMARK', 'NATCOPHARM',
                    'LAURUSLABS', 'GRANULES', 'AJANTPHARM', 'ABBOTINDIA', 'PFIZER', 'SANOFI'],
@@ -324,114 +322,82 @@ DASHBOARD_CATEGORIES = {
 
 WATCHLIST_DEFAULT = ['WIPRO', 'RELIANCE', 'TATASTEEL', 'NIPPON', 'BOSCHLTD', 'VEDL',
                      'TATAMOTORS', 'GOLD', 'SILVER', 'ADANIGREEN', 'SHRIRAMFIN', 'CHOLAFIN',
-                     'IRCTC', 'HAL', 'ETERNAL', 'DLF']
+                     'IRCTC', 'HAL', 'ZOMATO', 'DLF']
 
 # ── Premium CSS (Groww-inspired) ──────────────────────────────────────────
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
-
-/* Apply font only to our custom classes and main headers so Streamlit internal icons don't break */
-h1, h2, h3, h4, h5, h6, p, label, .ticker-bar, .main-title, .sub-title, .stock-card, .recent-item, .section-head, .signal-buy, .signal-sell, .signal-hold, .news-card, .live-badge, .movers-table {
-    font-family: 'Plus Jakarta Sans', sans-serif !important;
-}
-
-/* Global App Restyling */
-div[data-testid="stAppViewContainer"] {
-    background: radial-gradient(100% 100% at 50% 0%, #0c152a 0%, #020617 100%);
-}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+* { font-family: 'Inter', sans-serif; }
 
 /* Ticker Bar */
 .ticker-bar {
-    background: rgba(15, 23, 42, 0.4); backdrop-filter: blur(12px); border-radius: 12px; margin-bottom: 2rem;
-    display: flex; gap: 32px; overflow-x: auto; white-space: nowrap; font-size: 0.85rem;
-    border: 1px solid rgba(255, 255, 255, 0.05); padding: 12px 20px;
-    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+    background: #0f172a; padding: 8px 16px; border-radius: 8px; margin-bottom: 1rem;
+    display: flex; gap: 24px; overflow-x: auto; white-space: nowrap; font-size: 0.85rem;
+    border: 1px solid #1e293b;
 }
-.ticker-bar::-webkit-scrollbar { display: none; }
-.ticker-item { display: inline-block; animation: fadeIn 0.5s ease-out; }
+.ticker-item { display: inline-block; }
 .ticker-name { color: #94a3b8; font-weight: 600; }
-.ticker-price { color: #f8fafc; font-weight: 700; margin-left: 6px; }
-.ticker-up { color: #22c55e; font-weight: 700; margin-left: 4px; }
-.ticker-down { color: #ef4444; font-weight: 700; margin-left: 4px; }
+.ticker-price { color: #e2e8f0; font-weight: 700; margin-left: 6px; }
+.ticker-up { color: #10b981; font-weight: 600; margin-left: 4px; }
+.ticker-down { color: #ef4444; font-weight: 600; margin-left: 4px; }
 
 /* Main Title */
 .main-title {
-    font-size: 2.7rem; font-weight: 800; text-align: center;
-    background: linear-gradient(135deg, #818cf8 0%, #c084fc 100%);
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    margin-bottom: 0.2rem; letter-spacing: -0.5px;
+    font-size: 2rem; font-weight: 800; text-align: center;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    -webkit-background-clip: text; -webkit-fill-color: transparent;
+    margin-bottom: 0.3rem;
 }
-.sub-title { text-align: center; color: #cbd5e1; font-size: 1.05rem; margin-bottom: 2rem; font-weight: 400; }
+.sub-title { text-align: center; color: #94a3b8; font-size: 0.9rem; margin-bottom: 1.5rem; }
 
-/* Stock Cards (Glassmorphism) */
+/* Stock Cards (Groww style) */
 .stock-card {
-    background: rgba(30, 41, 59, 0.4); backdrop-filter: blur(16px);
-    border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 16px;
-    padding: 1.25rem; margin: 0.4rem 0; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    position: relative; overflow: hidden;
+    background: #1e293b; border: 1px solid #334155; border-radius: 12px;
+    padding: 1rem; margin: 0.4rem 0; transition: all 0.2s;
+    cursor: pointer;
 }
-.stock-card::before {
-    content: ""; position: absolute; top: 0; left: -100%; width: 50%; height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.03), transparent);
-    transition: 0.5s;
-}
-.stock-card:hover::before { left: 100%; }
-.stock-card:hover { 
-    border-color: rgba(99, 102, 241, 0.5); transform: translateY(-4px); 
-    box-shadow: 0 12px 30px rgba(99,102,241,0.15); background: rgba(30, 41, 59, 0.6);
-}
-.stock-card .name { font-size: 0.9rem; font-weight: 600; color: #cbd5e1; margin-bottom: 6px; }
-.stock-card .price { font-size: 1.4rem; font-weight: 800; color: #f8fafc; letter-spacing:-0.5px; }
-.stock-card .change-up { color: #22c55e; font-size: 0.9rem; font-weight: 700; margin-top:4px; }
-.stock-card .change-down { color: #ef4444; font-size: 0.9rem; font-weight: 700; margin-top:4px; }
+.stock-card:hover { border-color: #667eea; transform: translateY(-2px); box-shadow: 0 4px 20px rgba(102,126,234,0.15); }
+.stock-card .name { font-size: 0.85rem; font-weight: 600; color: #e2e8f0; margin-bottom: 4px; }
+.stock-card .price { font-size: 1.2rem; font-weight: 700; color: white; }
+.stock-card .change-up { color: #10b981; font-size: 0.85rem; font-weight: 600; }
+.stock-card .change-down { color: #ef4444; font-size: 0.85rem; font-weight: 600; }
 
-/* Recently Viewed */
-.recent-row { display: flex; gap: 16px; overflow-x: auto; padding: 12px 4px; }
-.recent-row::-webkit-scrollbar { height: 4px; }
+/* Recently Viewed Row */
+.recent-row { display: flex; gap: 16px; overflow-x: auto; padding: 8px 0; }
 .recent-item {
-    text-align: center; min-width: 90px; padding: 10px 14px;
-    background: rgba(30, 41, 59, 0.5); border-radius: 12px; border: 1px solid rgba(255,255,255,0.05);
-    transition: 0.2s;
+    text-align: center; min-width: 80px; padding: 8px 12px;
+    background: #1e293b; border-radius: 10px; border: 1px solid #334155;
 }
-.recent-item:hover { background: rgba(99, 102, 241, 0.1); border-color: rgba(99, 102, 241, 0.3); }
-.recent-item .sym { font-size: 0.85rem; font-weight: 700; color: #f8fafc; }
-.recent-item .chg-up { font-size: 0.75rem; color: #22c55e; font-weight: 700; }
-.recent-item .chg-down { font-size: 0.75rem; color: #ef4444; font-weight: 700; }
+.recent-item .sym { font-size: 0.8rem; font-weight: 700; color: #e2e8f0; }
+.recent-item .chg-up { font-size: 0.75rem; color: #10b981; font-weight: 600; }
+.recent-item .chg-down { font-size: 0.75rem; color: #ef4444; font-weight: 600; }
 
 /* Section Headers */
-.section-head { font-size: 1.25rem; font-weight: 800; color: #f8fafc; margin: 1.8rem 0 1rem 0; display:flex; align-items:center; gap:8px;}
+.section-head { font-size: 1.1rem; font-weight: 700; color: #e2e8f0; margin: 1.2rem 0 0.6rem 0; }
 
 /* Signal Cards */
-.signal-buy { background: linear-gradient(135deg, #059669 0%, #10b981 100%); color: white; padding: 1.5rem; border-radius: 16px; text-align: center; font-size: 1.3rem; font-weight: 800; box-shadow: 0 10px 30px rgba(16,185,129,0.25); text-transform: uppercase; letter-spacing: 1px;}
-.signal-sell { background: linear-gradient(135deg, #e11d48 0%, #ef4444 100%); color: white; padding: 1.5rem; border-radius: 16px; text-align: center; font-size: 1.3rem; font-weight: 800; box-shadow: 0 10px 30px rgba(239,68,68,0.25); text-transform: uppercase; letter-spacing: 1px;}
-.signal-hold { background: linear-gradient(135deg, #d97706 0%, #f59e0b 100%); color: white; padding: 1.5rem; border-radius: 16px; text-align: center; font-size: 1.3rem; font-weight: 800; box-shadow: 0 10px 30px rgba(245,158,11,0.25); text-transform: uppercase; letter-spacing: 1px;}
+.signal-buy { background: linear-gradient(135deg, #059669, #10b981); color: white; padding: 1.2rem; border-radius: 14px; text-align: center; font-size: 1.2rem; font-weight: 700; box-shadow: 0 6px 24px rgba(16,185,129,0.3); }
+.signal-sell { background: linear-gradient(135deg, #dc2626, #ef4444); color: white; padding: 1.2rem; border-radius: 14px; text-align: center; font-size: 1.2rem; font-weight: 700; box-shadow: 0 6px 24px rgba(239,68,68,0.3); }
+.signal-hold { background: linear-gradient(135deg, #d97706, #f59e0b); color: white; padding: 1.2rem; border-radius: 14px; text-align: center; font-size: 1.2rem; font-weight: 700; box-shadow: 0 6px 24px rgba(245,158,11,0.3); }
 
 /* News Card */
-.news-card { background: rgba(30, 41, 59, 0.4); backdrop-filter: blur(8px); border-left: 4px solid #818cf8; padding: 1rem 1.2rem; border-radius: 4px 12px 12px 4px; margin: 0.6rem 0; color: #e2e8f0; font-size: 0.95rem; line-height:1.5; transition: 0.2s; border-top: 1px solid rgba(255,255,255,0.05); border-right: 1px solid rgba(255,255,255,0.05); border-bottom: 1px solid rgba(255,255,255,0.05);}
-.news-card:hover { transform: translateX(4px); border-left-color: #c084fc; background: rgba(30, 41, 59, 0.7); }
-.sentiment-pos { color: #22c55e; font-weight: 800; font-size: 0.8rem; }
-.sentiment-neg { color: #ef4444; font-weight: 800; font-size: 0.8rem; }
-.sentiment-neu { color: #94a3b8; font-weight: 800; font-size: 0.8rem; }
+.news-card { background: #1e293b; border-left: 4px solid #667eea; padding: 0.8rem 1rem; border-radius: 0 10px 10px 0; margin: 0.4rem 0; color: #e2e8f0; font-size: 0.9rem; }
+.sentiment-pos { color: #10b981; font-weight: 700; }
+.sentiment-neg { color: #ef4444; font-weight: 700; }
+.sentiment-neu { color: #94a3b8; font-weight: 600; }
+
+/* Index mini card */
+.idx-card { background: #0f172a; border: 1px solid #1e293b; padding: 0.8rem; border-radius: 10px; margin: 0.3rem 0; }
 
 /* Live badge */
-.live-badge { display: inline-block; background: rgba(34, 197, 94, 0.15); border: 1px solid rgba(34,197,94,0.4); color: #22c55e; padding: 3px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 700; animation: pulse 2s infinite; letter-spacing: 0.5px;}
-@keyframes pulse { 0%,100% { opacity:1; box-shadow: 0 0 0 0 rgba(34,197,94,0.4); } 50% { opacity:0.6; box-shadow: 0 0 0 6px rgba(34,197,94,0); } }
-@keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+.live-badge { display: inline-block; background: #10b981; color: white; padding: 2px 10px; border-radius: 20px; font-size: 0.7rem; font-weight: 600; animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
 
-/* Tables */
-.movers-table { width: 100%; border-collapse: collapse; background: rgba(30, 41, 59, 0.3); border-radius: 12px; overflow: hidden; }
-.movers-table th { text-align: left; padding: 12px 16px; color: #94a3b8; font-size: 0.85rem; border-bottom: 1px solid rgba(255,255,255,0.05); background: rgba(0,0,0,0.2); }
-.movers-table td { padding: 12px 16px; color: #f8fafc; font-size: 0.95rem; border-bottom: 1px solid rgba(255,255,255,0.05); }
-.movers-table tr:hover td { background: rgba(255,255,255,0.02); }
-
-/* Sidebar Enhancement */
-[data-testid="stSidebar"] {
-    background: rgba(15, 23, 42, 0.6) !important;
-    backdrop-filter: blur(20px) !important;
-    border-right: 1px solid rgba(255,255,255,0.05) !important;
-}
+/* Top Movers Table */
+.movers-table { width: 100%; border-collapse: collapse; }
+.movers-table th { text-align: left; padding: 8px 12px; color: #94a3b8; font-size: 0.8rem; border-bottom: 1px solid #334155; }
+.movers-table td { padding: 8px 12px; color: #e2e8f0; font-size: 0.9rem; border-bottom: 1px solid #1e293b; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -446,10 +412,9 @@ def fetch_stock(raw_symbol, days=200):
     if symbol in STOCK_MAP:
         mapped = STOCK_MAP[symbol]
     else:
-        # Check fuzzy match (sort by length descending to match most specific first)
-        for k in sorted(STOCK_MAP.keys(), key=len, reverse=True):
-            v = STOCK_MAP[k]
-            if k in symbol or symbol.replace(' ','') == k or symbol in k:
+        # Check fuzzy match
+        for k, v in STOCK_MAP.items():
+            if k in symbol or symbol.replace(' ','') == k:
                 mapped = v
                 break
         
@@ -472,6 +437,25 @@ def fetch_stock(raw_symbol, days=200):
         return df, mapped
     except Exception:
         return None, mapped
+
+@st.cache_data(ttl=3600)
+def fetch_fundamentals(mapped):
+    """Fetch fundamental data as seen on Screener.in"""
+    try:
+        tk = yf.Ticker(mapped)
+        info = tk.info
+        return {
+            'mkt_cap': info.get('marketCap', 0),
+            'pe': info.get('trailingPE', 0),
+            'pb': info.get('priceToBook', 0),
+            'div_yield': info.get('dividendYield', 0),
+            'high_52': info.get('fiftyTwoWeekHigh', 0),
+            'low_52': info.get('fiftyTwoWeekLow', 0),
+            'sector': info.get('sector', 'N/A'),
+            'employees': info.get('fullTimeEmployees', 'N/A')
+        }
+    except:
+        return None
 
 
 @st.cache_data(ttl=300)
@@ -684,108 +668,85 @@ class AIEngine:
 
     def train(self, symbol, prices, volumes, news_sent=0.0):
         prices = np.array(prices, dtype=float); volumes = np.array(volumes, dtype=float)
-        X, y = [], []
-        for i in range(25, len(prices)-1):
+        X, y1, y2, y3 = [], [], [], []
+        for i in range(25, len(prices)-3):
             f = self._features(prices, volumes, i)
             if f is None: continue
-            X.append(f); y.append(1 if prices[i+1]>prices[i] else 0)
+            X.append(f)
+            y1.append(1 if prices[i+1]>prices[i] else 0)
+            y2.append(1 if prices[i+2]>prices[i] else 0)
+            y3.append(1 if prices[i+3]>prices[i] else 0)
+            
         if len(X) < 40: return None
-        X, y = np.array(X), np.array(y)
+        X = np.array(X)
         sc = StandardScaler(); Xs = sc.fit_transform(X)
-        Xtr,Xte,ytr,yte = train_test_split(Xs, y, test_size=0.2, random_state=42)
-        rf = RandomForestClassifier(n_estimators=100, max_depth=6, random_state=42)
-        gb = GradientBoostingClassifier(n_estimators=80, max_depth=4, random_state=42)
-        lr = LogisticRegression(max_iter=300, solver='liblinear', random_state=42)
-        rf.fit(Xtr,ytr); gb.fit(Xtr,ytr); lr.fit(Xtr,ytr)
-        self.models[symbol] = {'rf':rf,'gb':gb,'lr':lr}; self.scalers[symbol] = sc
-        return {'rf_test': rf.score(Xte,yte), 'gb_test': gb.score(Xte,yte), 'lr_test': lr.score(Xte,yte)}
+        
+        self.models[symbol] = {'d1': {}, 'd2': {}, 'd3': {}}
+        for day, labels in zip(['d1','d2','d3'], [y1, y2, y3]):
+            y = np.array(labels)
+            Xtr,Xte,ytr,yte = train_test_split(Xs, y, test_size=0.2, random_state=42)
+            rf = RandomForestClassifier(n_estimators=100, max_depth=6, random_state=42)
+            gb = GradientBoostingClassifier(n_estimators=80, max_depth=4, random_state=42)
+            rf.fit(Xtr,ytr); gb.fit(Xtr,ytr)
+            self.models[symbol][day] = {'rf': rf, 'gb': gb, 'acc': (rf.score(Xte,yte) + gb.score(Xte,yte))/2}
+            
+        self.scalers[symbol] = sc
+        return {'d1_acc': self.models[symbol]['d1']['acc'], 'd2_acc': self.models[symbol]['d2']['acc'], 'd3_acc': self.models[symbol]['d3']['acc']}
 
     def predict(self, symbol, prices, volumes, news_sent=0.0):
         if symbol not in self.models: return None
         prices = np.array(prices, dtype=float); volumes = np.array(volumes, dtype=float)
         
-        # Features for TOMORROW (uses data up to today)
-        f_tmrw = self._features(prices, volumes, len(prices))
-        # Features for TODAY (uses data up to yesterday)
-        f_today = self._features(prices, volumes, len(prices)-1)
+        f_latest = self._features(prices, volumes, len(prices))
+        f_prev = self._features(prices, volumes, len(prices)-1)
+        if f_latest is None or f_prev is None: return None
         
-        # Features for DAY 3 (T+2) 
-        # Simulates momentum carryover by forwarding the last known price
-        p_sim = list(prices) + [prices[-1]]
-        v_sim = list(volumes) + [volumes[-1]]
-        f_day3 = self._features(p_sim, v_sim, len(p_sim))
+        Xs_latest = self.scalers[symbol].transform([f_latest])
+        Xs_prev = self.scalers[symbol].transform([f_prev])
         
-        if f_tmrw is None or f_today is None or f_day3 is None: return None
-        
-        Xs_tmrw = self.scalers[symbol].transform([f_tmrw])
-        Xs_today = self.scalers[symbol].transform([f_today])
-        Xs_day3 = self.scalers[symbol].transform([f_day3])
-        
-        probs_tmrw = []; probs_today = []; probs_day3 = []
-        for m in self.models[symbol].values():
-            probs_tmrw.append(m.predict_proba(Xs_tmrw)[0][1] if hasattr(m,'predict_proba') else float(m.predict(Xs_tmrw)[0]))
-            probs_today.append(m.predict_proba(Xs_today)[0][1] if hasattr(m,'predict_proba') else float(m.predict(Xs_today)[0]))
-            probs_day3.append(m.predict_proba(Xs_day3)[0][1] if hasattr(m,'predict_proba') else float(m.predict(Xs_day3)[0]))
-            
-        up_tmrw = np.clip(np.mean(probs_tmrw) + 0.06*news_sent, 0, 1)
-        up_today = np.clip(np.mean(probs_today) + 0.06*news_sent, 0, 1)
-        up_day3 = np.clip(np.mean(probs_day3) + 0.06*news_sent, 0, 1)
-        
-        dn_tmrw = 1 - up_tmrw; conf_tmrw = max(up_tmrw, dn_tmrw)
-        sig_tmrw = 'BUY' if up_tmrw > 0.55 else 'SELL' if dn_tmrw > 0.55 else 'HOLD'
-        
-        dn_today = 1 - up_today; conf_today = max(up_today, dn_today)
-        sig_today = 'BUY' if up_today > 0.55 else 'SELL' if dn_today > 0.55 else 'HOLD'
-        
-        dn_day3 = 1 - up_day3; conf_day3 = max(up_day3, dn_day3)
-        sig_day3 = 'BUY' if up_day3 > 0.55 else 'SELL' if dn_day3 > 0.55 else 'HOLD'
-        
-        return {
-            'tomorrow': {'signal':sig_tmrw, 'confidence':round(conf_tmrw,4), 'up_prob':round(up_tmrw,4), 'down_prob':round(dn_tmrw,4)},
-            'today': {'signal':sig_today, 'confidence':round(conf_today,4), 'up_prob':round(up_today,4), 'down_prob':round(dn_today,4)},
-            'day3': {'signal':sig_day3, 'confidence':round(conf_day3,4), 'up_prob':round(up_day3,4), 'down_prob':round(dn_day3,4)}
-        }
+        results = {}
+        for label, day_key, feat in zip(['today', 'tomorrow', 'day_after'], ['d1', 'd1', 'd2'], [Xs_prev, Xs_latest, Xs_latest]):
+            m_set = self.models[symbol][day_key]
+            probs = [m_set[m].predict_proba(feat)[0][1] for m in ['rf', 'gb']]
+            up_prob = np.clip(np.mean(probs) + 0.08*news_sent, 0, 1)
+            dn_prob = 1 - up_prob
+            sig = 'BUY' if up_prob > 0.55 else 'SELL' if dn_prob > 0.55 else 'HOLD'
+            results[label] = {
+                'signal': sig, 
+                'confidence': round(max(up_prob, dn_prob), 4), 
+                'up_prob': round(up_prob, 4),
+                'news_bias': round(0.08*news_sent, 4)
+            }
+        return results
 
 
 # ── Charts ────────────────────────────────────────────────────────────────
 def build_candle_chart(df, symbol):
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.75,0.25], vertical_spacing=0.03)
-    # Neon Green: #22c55e, Vivid Rose: #f43f5e
     fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'],
-        increasing_line_color='#22c55e', increasing_fillcolor='#22c55e',
-        decreasing_line_color='#f43f5e', decreasing_fillcolor='#f43f5e', name='Price'), row=1, col=1)
-    
+        increasing_line_color='#10b981', decreasing_line_color='#ef4444', name='Price'), row=1, col=1)
     ma20 = df['Close'].rolling(20).mean()
-    fig.add_trace(go.Scatter(x=df.index, y=ma20, line=dict(color='#c084fc',width=2), name='MA20'), row=1, col=1)
-    
-    colors = ['#22c55e' if c>=o else '#f43f5e' for c,o in zip(df['Close'], df['Open'])]
-    fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=colors, name='Vol', opacity=0.3), row=2, col=1)
-    
-    fig.update_layout(template='plotly_dark', height=450, showlegend=False,
-        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-        title=dict(text=f'{symbol} Live Chart', font=dict(size=16, color='#f8fafc')),
-        xaxis_rangeslider_visible=False, margin=dict(l=10,r=10,t=40,b=10),
-        xaxis=dict(gridcolor='rgba(255,255,255,0.05)', tickfont=dict(color='#94a3b8')),
-        yaxis=dict(gridcolor='rgba(255,255,255,0.05)', tickfont=dict(color='#94a3b8')),
-        xaxis2=dict(gridcolor='rgba(255,255,255,0.05)', tickfont=dict(color='#94a3b8')),
-        yaxis2=dict(gridcolor='rgba(255,255,255,0.05)', tickfont=dict(color='#94a3b8'), showticklabels=False)
-    )
+    fig.add_trace(go.Scatter(x=df.index, y=ma20, line=dict(color='#667eea',width=1.5), name='MA20'), row=1, col=1)
+    colors = ['#10b981' if c>=o else '#ef4444' for c,o in zip(df['Close'], df['Open'])]
+    fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=colors, name='Vol', opacity=0.5), row=2, col=1)
+    fig.update_layout(template='plotly_dark', height=420, showlegend=False,
+        paper_bgcolor='#0f172a', plot_bgcolor='#0f172a',
+        title=dict(text=f'{symbol}', font=dict(size=14, color='#e2e8f0')),
+        xaxis_rangeslider_visible=False, margin=dict(l=10,r=10,t=35,b=10))
     return fig
 
 def build_gauge(up_prob, signal, title="Signal"):
-    cmap = {'BUY':'#22c55e','SELL':'#f43f5e','HOLD':'#f59e0b'}
+    cmap = {'BUY':'#10b981','SELL':'#ef4444','HOLD':'#f59e0b'}
     fig = go.Figure(go.Indicator(mode="gauge+number", value=up_prob*100,
-        title={'text':f"{title}: {signal}",'font':{'size':16,'color':'#f8fafc'}},
-        number={'suffix':'%','font':{'color':'#f8fafc', 'size':24}},
-        gauge={'axis':{'range':[0,100],'tickcolor':'rgba(255,255,255,0.2)', 'tickwidth':1}, 
-               'bar':{'color':cmap.get(signal,'#f59e0b'), 'thickness':0.25},
-               'bgcolor':'rgba(30,41,59,0.3)',
-               'borderwidth': 0,
-               'steps':[{'range':[0,45],'color':'rgba(244,63,94,0.1)'},
-                        {'range':[45,55],'color':'rgba(245,158,11,0.1)'},
-                        {'range':[55,100],'color':'rgba(34,197,94,0.1)'}]}))
-    fig.update_layout(height=260, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                      font={'color':'#f8fafc', 'family':'Plus Jakarta Sans'}, margin=dict(l=20,r=20,t=40,b=10))
+        title={'text':f"{title}: {signal}",'font':{'size':16,'color':'white'}},
+        number={'suffix':'%','font':{'color':'white'}},
+        gauge={'axis':{'range':[0,100],'tickcolor':'white'}, 'bar':{'color':cmap.get(signal,'#f59e0b')},
+               'bgcolor':'#1e293b',
+               'steps':[{'range':[0,45],'color':'rgba(239,68,68,0.15)'},
+                        {'range':[45,55],'color':'rgba(245,158,11,0.15)'},
+                        {'range':[55,100],'color':'rgba(16,185,129,0.15)'}]}))
+    fig.update_layout(height=250, paper_bgcolor='#0f172a', plot_bgcolor='#0f172a',
+                      font={'color':'white'}, margin=dict(l=30,r=30,t=50,b=10))
     return fig
 
 
@@ -816,30 +777,25 @@ def main():
 
     # Sidebar
     with st.sidebar:
-        st.markdown("""
-            <div style="text-align:center; padding-bottom: 20px;">
-                <h2 style="font-weight: 800; background: linear-gradient(135deg, #818cf8, #c084fc); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 5px;">
-                    🧠 Pro Predictor
-                </h2>
-                <span class="live-badge" style="margin-top: 0px;">● LIVE TERMINAL</span>
-            </div>
-        """, unsafe_allow_html=True)
+        st.markdown("### 🧠 AI Predictor Pro")
         page = st.radio("Navigate", [
-            "🏠 Explore", "🔮 AI Prediction", "📰 Market News",
+            "🏠 Explore", "🔮 AI Prediction", "🔍 Stock Screener", "📰 Market News",
             "📊 All Stocks", "🏆 Top Movers", "📈 Sector View"
         ])
         st.markdown("---")
         st.caption("**Data Sources**")
         st.caption("✅ Yahoo Finance Live")
         st.caption("✅ MoneyControl News")
-        st.caption("✅ BSE India")
-        st.caption("✅ NSE India")
+        st.caption("✅ Screener.in Fundamentals")
+        st.caption("✅ BSE / NSE India")
 
     # ── Pages ─────────────────────────────────────────────────────────
     if page == "🏠 Explore":
         page_explore()
     elif page == "🔮 AI Prediction":
         page_prediction()
+    elif page == "🔍 Stock Screener":
+        page_screener()
     elif page == "📰 Market News":
         page_news()
     elif page == "📊 All Stocks":
@@ -867,6 +823,21 @@ def page_explore():
     row_html += '</div>'
     st.markdown(row_html, unsafe_allow_html=True)
 
+    # NEW: Market Pulse
+    st.markdown('<div class="section-head">⚡ Market Pulse (Candlestick Signals)</div>', unsafe_allow_html=True)
+    pulse_syms = ['RELIANCE', 'TATAMOTORS', 'WIPRO', 'GOLD']
+    pulse_cols = st.columns(len(pulse_syms))
+    for i, psym in enumerate(pulse_syms):
+        pdf, _ = fetch_stock(psym, 10)
+        if pdf is not None:
+            pat = detect_candle_pattern(pdf)
+            color = "#10b981" if "Bullish" in pat['pattern'] or "Hammer" in pat['pattern'] else "#ef4444" if "Bearish" in pat['pattern'] or "Star" in pat['pattern'] else "#94a3b8"
+            with pulse_cols[i]:
+                st.markdown(f"""<div class="stock-card" style="border-left: 4px solid {color}">
+                    <div class="name">{psym}</div>
+                    <div style="font-size:0.8rem; color:{color}; font-weight:700">{pat['pattern']}</div>
+                </div>""", unsafe_allow_html=True)
+
     # Most Traded (top 4 cards)
     st.markdown('<div class="section-head">🔥 Most Traded Stocks</div>', unsafe_allow_html=True)
     top4 = ['RELIANCE', 'TATASTEEL', 'SBIN', 'ADANIGREEN']
@@ -888,13 +859,12 @@ def page_explore():
                    'RELIANCE','SBIN','ICICIBANK','INFY','WIPRO','BAJFINANCE','HDFCBANK',
                    'ITC','MARUTI','JSWSTEEL','VEDL','NIPPON','COALINDIA']
     movers_data = []
-    prog = st.progress(0, text="Fetching top movers (Accelerated)...")
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        future_to_sym = {executor.submit(get_price_info, sym, 5): sym for sym in movers_syms}
-        for i, future in enumerate(concurrent.futures.as_completed(future_to_sym)):
-            if i % 2 == 0: prog.progress(min(1.0, (i+1)/len(movers_syms)), text=f"Fetching {future_to_sym[future]}...")
-            info = future.result()
-            if info: movers_data.append(info)
+    prog = st.progress(0, text="Fetching top movers...")
+    for idx, sym in enumerate(movers_syms):
+        prog.progress((idx+1)/len(movers_syms), text=f"Fetching {sym}...")
+        info = get_price_info(sym, 5)
+        if info:
+            movers_data.append(info)
     prog.empty()
 
     if movers_data:
@@ -933,13 +903,13 @@ def page_explore():
     with lc2:
         st.link_button("📈 NSE India", "https://www.nseindia.com/", use_container_width=True)
     with lc3:
-        st.link_button("💼 BSE India", "https://www.bseindia.com/", use_container_width=True)
+        st.link_button("🔍 Screener.in", "https://www.screener.in/", use_container_width=True)
 
 
 # ── PAGE: AI Prediction ──────────────────────────────────────────────────
 def page_prediction():
-    st.subheader("🔮 AI Stock Prediction Engine (Next Session Forecast)")
-    st.caption("This model analyzes historical trends, technical indicators, and news sentiment to predict the market direction for the **Next Trading Session** (accurately accounts for weekends/holidays).")
+    st.subheader("🔮 AI Stock Prediction Engine (2-Day Forecast)")
+    st.caption("This model analyzes historical trends, technical indicators, and news sentiment to predict if the price will go UP or DOWN **today** and **tomorrow**.")
     c1, c2 = st.columns([3, 1])
     with c1:
         symbol = st.text_input("Enter Stock Symbol",
@@ -990,93 +960,109 @@ def page_prediction():
                 <div class="price" style="font-size:2rem">{curr}{cur:,.2f}</div>
                 <div class="{cls}" style="font-size:1rem">{'▲' if chg>=0 else '▼'} {chg:+,.2f} ({pct:+.2f}%)</div>
             </div>""", unsafe_allow_html=True)
-        
-        # AI Prediction Logic
-        if df is not None and len(df) > 60:
-            close = df['Close']; vol = df['Volume']
-            if isinstance(close, pd.DataFrame): close = close.iloc[:,0]
-            if isinstance(vol, pd.DataFrame): vol = vol.iloc[:,0]
-            prices = close.dropna().astype(float).tolist()
-            volumes = vol.dropna().astype(float).tolist()
-
-            if is_commodity:
-                fx = get_usd_inr(); prices = [p*fx for p in prices]
-
-            with st.spinner("📰 Analyzing news..."): 
-                news = fetch_market_news(f"{symbol} share stock market news")
-                sent, scored_news = analyze_news(news)
-
-            with st.spinner("🧠 Training AI ensemble..."):
-                metrics = st.session_state.engine.train(symbol, prices, volumes, sent)
             
-            if metrics:
-                pred = st.session_state.engine.predict(symbol, prices, volumes, sent)
-                if pred:
-                    sig_cls = {'BUY':'signal-buy','SELL':'signal-sell','HOLD':'signal-hold'}
-                    sig_emoji = {'BUY':'🟢 STRONG BUY','SELL':'🔴 SELL','HOLD':'🟡 HOLD'}
-                    
-                    tc1, tc2, tc3 = st.columns(3)
-                    with tc1:
-                        st.markdown(f'<div class="{sig_cls[pred["today"]["signal"]]}">🎯 T (RECENT): {sig_emoji[pred["today"]["signal"]]} <br>'
-                                    f'<span style="font-size:0.9rem;font-weight:500;">AI Confidence: {pred["today"]["confidence"]:.1%}</span></div>', unsafe_allow_html=True)
-                    with tc2:
-                        st.markdown(f'<div class="{sig_cls[pred["tomorrow"]["signal"]]}">🚀 T+1 (OPEN): {sig_emoji[pred["tomorrow"]["signal"]]} <br>'
-                                    f'<span style="font-size:0.9rem;font-weight:500;">AI Confidence: {pred["tomorrow"]["confidence"]:.1%}</span></div>', unsafe_allow_html=True)
-                    with tc3:
-                        st.markdown(f'<div class="{sig_cls[pred["day3"]["signal"]]}">🔮 T+2 (FUTURE): {sig_emoji[pred["day3"]["signal"]]} <br>'
-                                    f'<span style="font-size:0.9rem;font-weight:500;">AI Confidence: {pred["day3"]["confidence"]:.1%}</span></div>', unsafe_allow_html=True)
+            # NEW: Screener.in Deep Fundamentals Button
+            clean_sym = mapped.replace('.NS', '').replace('.BO', '')
+            st.link_button(f"🌐 Visit Full Screener.in Profile for {symbol}", 
+                           f"https://www.screener.in/company/{clean_sym}/", 
+                           use_container_width=True)
 
-                    st.write("") # Spacer
-                    gc1, gc2, gc3 = st.columns(3)
-                    with gc1: st.plotly_chart(build_gauge(pred['today']['up_prob'], pred['today']['signal'], "T (Recent)"), use_container_width=True)
-                    with gc2: st.plotly_chart(build_gauge(pred['tomorrow']['up_prob'], pred['tomorrow']['signal'], "T+1 (Open)"), use_container_width=True)
-                    with gc3: st.plotly_chart(build_gauge(pred['day3']['up_prob'], pred['day3']['signal'], "T+2 (Future)"), use_container_width=True)
-                    
-                    st.write("")
-                    st.plotly_chart(build_candle_chart(df.tail(60), symbol), use_container_width=True)
-                    res = detect_candle_pattern(df.tail(3))
+            # NEW: Fundamental Pulse (Screener.in Data Source)
+            with st.spinner("📊 Fetching Screener fundamentals..."):
+                f_data = fetch_fundamentals(mapped)
+            
+            if f_data:
+                st.markdown('<div class="section-head">🏛️ Screener.in Fundamentals</div>', unsafe_allow_html=True)
+                fc1, fc2, fc3, fc4 = st.columns(4)
+                
+                # Format Market Cap to Cr (Indian style)
+                mcap_in_cr = f_data['mkt_cap'] / 10000000 if "₹" in curr else f_data['mkt_cap']
+                mcap_unit = "Cr" if "₹" in curr else ""
+                
+                fc1.metric("Market Cap", f"{mcap_in_cr:,.0f} {mcap_unit}")
+                fc2.metric("P/E Ratio", f"{f_data['pe']:.2f}" if f_data['pe'] else "N/A")
+                fc3.metric("Div. Yield", f"{f_data['div_yield']*100:.2f}%" if f_data['div_yield'] else "0.0%")
+                fc4.metric("P/B Ratio", f"{f_data['pb']:.2f}" if f_data['pb'] else "N/A")
+                
+                st.markdown(f"**Sector:** {f_data['sector']} | **52W High:** {curr}{f_data['high_52']:,.2f} | **52W Low:** {curr}{f_data['low_52']:,.2f}")
+                st.write("") # Spacer
+
+            # AI Prediction Logic
+            if df is not None and len(df) > 60:
+                close = df['Close']; vol = df['Volume']
+                if isinstance(close, pd.DataFrame): close = close.iloc[:,0]
+                if isinstance(vol, pd.DataFrame): vol = vol.iloc[:,0]
+                prices = close.dropna().astype(float).tolist()
+                volumes = vol.dropna().astype(float).tolist()
+
+                if is_commodity:
+                    fx = get_usd_inr(); prices = [p*fx for p in prices]
+
+                with st.spinner("📰 Analyzing news..."): 
+                    news = fetch_market_news(f"{symbol} share stock market news")
+                    sent, scored_news = analyze_news(news)
+
+                with st.spinner("🧠 Training AI ensemble..."):
+                    metrics = st.session_state.engine.train(symbol, prices, volumes, sent)
+                
+                if metrics:
+                    pred = st.session_state.engine.predict(symbol, prices, volumes, sent)
+                    if pred:
+                        sig_cls = {'BUY':'signal-buy','SELL':'signal-sell','HOLD':'signal-hold'}
+                        sig_emoji = {'BUY':'🟢 BUY','SELL':'🔴 SELL','HOLD':'🟡 HOLD'}
                         
-                    # Resolve AI vs Technical Conflict for User
-                    ai_sig = pred['tomorrow']['signal']
-                    tech_str = res['advice'].upper() + res['pattern'].upper()
-                    tech_sig = 'SELL' if ('SELL' in tech_str or 'BEARISH' in tech_str or '🔻' in tech_str) else 'BUY' if ('BUY' in tech_str or 'BULLISH' in tech_str) else 'HOLD'
+                        tc1, tc2, tc3 = st.columns(3)
+                        with tc1:
+                            st.markdown(f'<div class="{sig_cls[pred["today"]["signal"]]}">🎯 TODAY <br>'
+                                        f'<span style="font-size:0.9rem;font-weight:500;">AI Conf: {pred["today"]["confidence"]:.0%}</span></div>', unsafe_allow_html=True)
+                        with tc2:
+                            st.markdown(f'<div class="{sig_cls[pred["tomorrow"]["signal"]]}">🎯 TOMORROW <br>'
+                                        f'<span style="font-size:0.9rem;font-weight:500;">AI Conf: {pred["tomorrow"]["confidence"]:.0%}</span></div>', unsafe_allow_html=True)
+                        with tc3:
+                            st.markdown(f'<div class="{sig_cls[pred["day_after"]["signal"]]}">🎯 DAY AFTER <br>'
+                                        f'<span style="font-size:0.9rem;font-weight:500;">AI Conf: {pred["day_after"]["confidence"]:.0%}</span></div>', unsafe_allow_html=True)
+
+                        st.write("") # Spacer
+                        gc1, gc2, gc3 = st.columns(3)
+                        with gc1: st.plotly_chart(build_gauge(pred['today']['up_prob'], pred['today']['signal'], "Prob"), use_container_width=True)
+                        with gc2: st.plotly_chart(build_gauge(pred['tomorrow']['up_prob'], pred['tomorrow']['signal'], "Prob"), use_container_width=True)
+                        with gc3: st.plotly_chart(build_gauge(pred['day_after']['up_prob'], pred['day_after']['signal'], "Prob"), use_container_width=True)
                         
-                    if tech_sig != 'HOLD' and tech_sig != ai_sig:
-                        conflict_note = f"⚠️ *Note: The isolated technical pattern is {tech_sig}, but the AI calculates a **{ai_sig}** by including News Sentiment and Volume.*"
-                    elif tech_sig != 'HOLD':
-                        conflict_note = f"✅ *Note: This technical pattern confirms the AI's {ai_sig} prediction.*"
+                        st.write("")
+                        st_chart_col, st_advice_col = st.columns([2, 1])
+                        with st_chart_col:
+                            st.plotly_chart(build_candle_chart(df.tail(60), symbol), use_container_width=True)
+                        with st_advice_col:
+                            res = detect_candle_pattern(df.tail(3))
+                            st.markdown(f'<div style="background:#1e293b; padding:15px; border-radius:10px; border:1px solid #334155">'
+                                        f'<h4 style="margin-top:0">🔍 Pattern Analysis</h4>'
+                                        f'<b>Recent Pattern:</b> {res["pattern"]} <br><br>'
+                                        f'<b>Suggested Strategy:</b> <br><span style="font-size:0.9rem">{res["advice"]}</span>'
+                                        f'</div>', unsafe_allow_html=True)
+                        
+                        st.subheader("🤖 Model Accuracy")
+                        mc1,mc2,mc3 = st.columns(3)
+                        mc1.metric("1-Day Accuracy", f"{metrics['d1_acc']:.1%}")
+                        mc2.metric("2-Day Accuracy", f"{metrics['d2_acc']:.1%}")
+                        mc3.metric("3-Day Accuracy", f"{metrics['d3_acc']:.1%}")
+
+                        if scored_news:
+                            st.subheader("📰 News Sentiment")
+                            sl = "🟢 Bullish" if sent>0.2 else "🔴 Bearish" if sent<-0.2 else "🟡 Neutral"
+                            st.markdown(f"**{sl} ({sent:+.2f})**")
+                            for n in scored_news[:6]:
+                                scls = {'positive':'sentiment-pos','negative':'sentiment-neg'}.get(n['label'],'sentiment-neu')
+                                st.markdown(f'<div class="news-card"><span class="{scls}">[{n["label"].upper()}]</span> '
+                                            f'{n["title"]}</div>', unsafe_allow_html=True)
                     else:
-                        conflict_note = ""
-
-                    st.info(f"**Technical Indicator (Candle):** {res['pattern']} \n\n **Basic Strategy:** {res['advice']} \n\n {conflict_note}")
-                    
-                    st.subheader("🤖 Model Accuracy")
-                    mc1,mc2,mc3 = st.columns(3)
-                    mc1.metric("Random Forest", f"{metrics['rf_test']:.1%}")
-                    mc2.metric("Gradient Boost", f"{metrics['gb_test']:.1%}")
-                    mc3.metric("Logistic Reg", f"{metrics['lr_test']:.1%}")
-
-                    if scored_news:
-                        st.subheader("📰 News Sentiment")
-                        sl = "🟢 Bullish" if sent>0.2 else "🔴 Bearish" if sent<-0.2 else "🟡 Neutral"
-                        st.markdown(f"**{sl} ({sent:+.2f})**")
-                        for n in scored_news[:6]:
-                            scls = {'positive':'sentiment-pos','negative':'sentiment-neg'}.get(n['label'],'sentiment-neu')
-                            st.markdown(f'<div class="news-card"><span class="{scls}">[{n["label"].upper()}]</span> '
-                                        f'{n["title"]}</div>', unsafe_allow_html=True)
+                        st.warning("⚠️ Prediction failed for this stock.")
                 else:
-                    st.warning(f"⚠️ Prediction failed for {symbol}. The model couldn't find a clear trend.")
-                    st.info("Try selecting a stock with more consistent trading volume.")
-            else:
-                data_points = len(prices) if 'prices' in locals() else 0
-                st.warning(f"⚠️ Not enough historical data for AI prediction for {symbol} (Found {data_points} points, need 60+).")
-                st.info("Showing live price and chart only.")
-                if df is not None and not df.empty:
+                    st.warning("⚠️ Not enough historical data for AI prediction (need 60+ days). Showing live price and chart only.")
                     st.plotly_chart(build_candle_chart(df.tail(60), symbol), use_container_width=True)
-        else:
-            st.warning("⚠️ This stock is too new for AI prediction (no historical data). Showing live price only.")
-            if df is not None and not df.empty:
-                st.plotly_chart(build_candle_chart(df, symbol), use_container_width=True)
+            else:
+                st.warning("⚠️ This stock is too new for AI prediction (no historical data). Showing live price only.")
+                if df is not None and not df.empty:
+                    st.plotly_chart(build_candle_chart(df, symbol), use_container_width=True)
 
 
 
@@ -1112,16 +1098,14 @@ def page_all_stocks():
     symbols = list(dict.fromkeys(symbols))
     
     rows = []
-    prog = st.progress(0, text="Loading Live Prices...")
-    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
-        future_to_sym = {executor.submit(get_price_info, sym, 5): sym for sym in symbols}
-        for i, future in enumerate(concurrent.futures.as_completed(future_to_sym)):
-            if i % 3 == 0: prog.progress(min(1.0, (i+1)/len(symbols)), text=f"Accelerating {future_to_sym[future]}...")
-            info = future.result()
-            if info:
-                rows.append({'Stock': info['symbol'], 'Price': f"{info['currency']}{info['price']:,.2f}",
-                    'Change': f"{info['change']:+.2f}", 'Change%': f"{info['pct']:+.2f}%",
-                    'Volume': f"{info['volume']:,}"})
+    prog = st.progress(0, text="Loading...")
+    for i, sym in enumerate(symbols):
+        prog.progress((i+1)/len(symbols), text=f"Fetching {sym}...")
+        info = get_price_info(sym, 5)
+        if info:
+            rows.append({'Stock': sym, 'Price': f"{info['currency']}{info['price']:,.2f}",
+                'Change': f"{info['change']:+.2f}", 'Change%': f"{info['pct']:+.2f}%",
+                'Volume': f"{info['volume']:,}"})
     prog.empty()
 
     if rows:
@@ -1149,7 +1133,7 @@ def page_top_movers():
                 'NESTLEIND','HINDUNILVR','BRITANNIA','DABUR','BOSCHLTD','SIEMENS',
                 'SHRIRAMFIN','EICHERMOT','BANKBARODA','PNB','MUTHOOTFIN','HAVELLS',
                 'VOLTAS','DLF','GODREJPROP','IRCTC','IRFC','RVNL',
-                'HAL','BEL','ETERNAL','ZOMATO','PAYTM','POLYCAB','DIXON',
+                'HAL','BEL','ZOMATO','PAYTM','POLYCAB','DIXON',
                 'LUPIN','BIOCON','GLENMARK','PIDILITIND','SRF',
                 'POWERGRID','BPCL','IOC','GAIL','NHPC','PFC','RECLTD',
                 'TVSMOTOR','ASHOKLEY','MRF','APOLLOTYRE',
@@ -1157,13 +1141,11 @@ def page_top_movers():
                 'MARICO','COLPAL','DMART','JUBLFOOD',
                 'ABB','CROMPTON','KEI','THERMAX']
     data = []
-    prog = st.progress(0, text="Scanning market concurrently...")
-    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
-        future_to_sym = {executor.submit(get_price_info, sym, 5): sym for sym in all_syms}
-        for i, future in enumerate(concurrent.futures.as_completed(future_to_sym)):
-            if i % 5 == 0: prog.progress(min(1.0, (i+1)/len(all_syms)), text=f"Scanning {future_to_sym[future]}...")
-            info = future.result()
-            if info: data.append(info)
+    prog = st.progress(0, text="Scanning market...")
+    for i, sym in enumerate(all_syms):
+        prog.progress((i+1)/len(all_syms), text=f"{sym}...")
+        info = get_price_info(sym, 5)
+        if info: data.append(info)
     prog.empty()
 
     if not data:
@@ -1191,10 +1173,115 @@ def page_top_movers():
                 </div>""", unsafe_allow_html=True)
 
 
+# ── PAGE: Stock Screener ──────────────────────────────────────────────────
+def page_screener():
+    st.subheader("🚀 Power Screener — Find Breakout Stocks")
+    st.caption("Scan the market based on technical indicators and volume spikes to find high-probability trades.")
+    
+    with st.expander("🛠️ Screener Filters (Technical & Fundamentals)", expanded=True):
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            rsi_filter = st.selectbox("RSI Signal", ["None", "Oversold (<35)", "Bullish (>60)", "Overbought (>70)"])
+        with c2:
+            vol_filter = st.selectbox("Volume Spike", ["None", "High (>2x Avg)", "Extreme (>5x Avg)"])
+        with c3:
+            pe_filter = st.selectbox("P/E Ratio", ["Any", "Under 15", "Under 25", "Under 40"])
+        with c4:
+            pat_filter = st.selectbox("Candlestick Pattern", ["Any", "Bullish Hammer", "Bullish Engulfing", "Bearish Engulfing", "Doji"])
+            
+    if st.button("🔍 Start Market Scan", use_container_width=True):
+        # We screen the Nifty 50 and Top Growth stocks for speed
+        screen_list = list(dict.fromkeys(DASHBOARD_CATEGORIES['🏛️ Indices'] + 
+                                       DASHBOARD_CATEGORIES['🔵 Tata Group'] + 
+                                       DASHBOARD_CATEGORIES['🏢 Adani Group'] +
+                                       DASHBOARD_CATEGORIES['💻 IT & Software']))
+        
+        matches = []
+        prog = st.progress(0, text="Scanning Market Pulse...")
+        
+        for i, sym in enumerate(screen_list):
+            prog.progress((i+1)/len(screen_list), text=f"Analyzing {sym}...")
+            df, _ = fetch_stock(sym, 30)
+            if df is not None and len(df) > 14:
+                # Calculate RSI
+                closes = df['Close'].dropna().astype(float).values
+                rsi = AIEngine._rsi(closes)
+                
+                # Calculate Volume Spike
+                vols = df['Volume'].dropna().values
+                avg_vol = np.mean(vols[:-1]) if len(vols) > 1 else 1
+                curr_vol = vols[-1]
+                vol_ratio = curr_vol / avg_vol if avg_vol > 0 else 0
+                
+                # Detect Pattern
+                pat_res = detect_candle_pattern(df)
+                
+                # Apply Filters
+                pass_rsi = True
+                if rsi_filter == "Oversold (<35)": pass_rsi = rsi < 35
+                elif rsi_filter == "Bullish (>60)": pass_rsi = rsi > 60
+                elif rsi_filter == "Overbought (>70)": pass_rsi = rsi > 70
+                
+                pass_vol = True
+                if vol_filter == "High (>2x Avg)": pass_vol = vol_ratio > 2
+                elif vol_filter == "Extreme (>5x Avg)": pass_vol = vol_ratio > 5
+                
+                pass_pat = True
+                if pat_filter != "Any":
+                    pass_pat = pat_filter.lower() in pat_res['pattern'].lower()
+
+                # Apply PE Filter
+                pass_pe = True
+                if pe_filter != "Any":
+                    f_stats = fetch_fundamentals(mapped)
+                    curr_pe = f_stats['pe'] if f_stats else 0
+                    if pe_filter == "Under 15": pass_pe = 0 < curr_pe < 15
+                    elif pe_filter == "Under 25": pass_pe = 0 < curr_pe < 25
+                    elif pe_filter == "Under 40": pass_pe = 0 < curr_pe < 40
+                
+                if pass_rsi and pass_vol and pass_pat and pass_pe:
+                    info = get_price_info(sym, 2)
+                    
+                    # NEW: Market News Collector for the matched stock
+                    news_items = fetch_market_news(f"{sym} share stock news")
+                    lat_news = news_items[0]['title'] if news_items else "No recent news"
+                    n_sent = score_headline(lat_news)
+                    n_label = "🟢 Positive" if n_sent > 0 else "🔴 Negative" if n_sent < 0 else "⚖️ Neutral"
+                    
+                    matches.append({
+                        'Stock': sym,
+                        'Price': f"{info['currency']}{info['price']:,.2f}",
+                        'Change%': f"{info['pct']:+.2f}%",
+                        'RSI': f"{rsi:.1f}",
+                        'P/E': f"{fetch_fundamentals(mapped)['pe']:.1f}" if fetch_fundamentals(mapped) else "N/A",
+                        'Vol': f"{vol_ratio:.1fx}",
+                        'Pattern': pat_res['pattern'],
+                        'Latest News': lat_news
+                    })
+        prog.empty()
+        
+        if matches:
+            st.success(f"✅ Found {len(matches)} stocks matching your criteria!")
+            m_df = pd.DataFrame(matches)
+            
+            # Stylized display
+            def styl_screener(val):
+                if any(x in str(val) for x in ['Bullish', 'Hammer', '+', 'Positive']): return 'color: #10b981; font-weight: bold'
+                if any(x in str(val) for x in ['Bearish', '-', 'Negative']): return 'color: #ef4444; font-weight: bold'
+                return ''
+                
+            st.dataframe(m_df.style.map(styl_screener), use_container_width=True, hide_index=True)
+            
+            # Quick Insight
+            st.info("💡 **Market News Collector**: The 'Latest News catalyst' column shows the real-time reason for the price action. Combine technical signals (RSI/Volume) with these news headlines for higher accuracy.")
+        else:
+            st.warning("❌ No stocks found matching these exact filters. Try loosening the criteria.")
+
+
 # ── PAGE: Sector View ────────────────────────────────────────────────────
 def page_sector_view():
     st.subheader("📈 Sector-wise Performance")
-    for sector, syms in DASHBOARD_CATEGORIES.items():
+    for sector, syms in DASHBOARD_CATEGORIES.items(): 
         if sector == '🏛️ Indices': continue
         unique_syms = list(dict.fromkeys(syms))[:5]
         with st.expander(f"{sector}"):
