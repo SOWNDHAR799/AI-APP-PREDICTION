@@ -1201,7 +1201,7 @@ def page_screener():
         
         for i, sym in enumerate(screen_list):
             prog.progress((i+1)/len(screen_list), text=f"Analyzing {sym}...")
-            df, _ = fetch_stock(sym, 30)
+            df, mapped = fetch_stock(sym, 30)
             if df is not None and len(df) > 14:
                 # Calculate RSI
                 closes = df['Close'].dropna().astype(float).values
