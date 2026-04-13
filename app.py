@@ -1053,9 +1053,9 @@ def page_prediction():
                         st.write("")
                         st_chart_col, st_advice_col = st.columns([2, 1])
                         with st_chart_col:
-                            st.plotly_chart(build_candle_chart(df.tail(60), symbol), use_container_width=True)
+                            st.plotly_chart(build_candle_chart(df_run.tail(60), symbol), use_container_width=True)
                         with st_advice_col:
-                            res = detect_candle_pattern(df.tail(3))
+                            res = detect_candle_pattern(df_run.tail(3))
                             st.markdown(f'<div style="background:#1e293b; padding:15px; border-radius:10px; border:1px solid #334155">'
                                         f'<h4 style="margin-top:0">🔍 Pattern Analysis</h4>'
                                         f'<b>Recent Pattern:</b> {res["pattern"]} <br><br>'
