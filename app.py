@@ -923,10 +923,28 @@ def page_prediction():
         sym_list = sorted(STOCK_MAP.keys())
         st.write(", ".join(sym_list))
 
-    if run and symbol.strip():
-        symbol = symbol.strip().upper()
-        with st.spinner(f"📡 Fetching data for {symbol}..."):
-            df, mapped = fetch_stock(symbol, 250)
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        symbol = st.text_input("💎 Enter Stock Symbol", value="TATASTEEL", help="e.g. RELIANCE, TCS, ZOMATO").upper()
+    with c2:
+        timeframe = st.selectbox("⏳ Analysis Timeframe", ["Daily (Next 3 Days)", "Intraday (Next 1 Hour)"])
+    
+    run = st.button("🧠 Run AI", use_container_width=True)
+
+    if run and symbol:
+        with st.spinner(f"🔍 Analyzing {symbol} in {timeframe} mode..."):
+            days_to_fetch = 200 if "Daily" in timeframe else 5
+            interval = '1d' if "Daily" in timeframe else '15m'
+            
+            # Fetch base data
+            df, mapped = fetch_stock(symbol, days_to_fetch)
+            if "Intraday" in timeframe:
+                # Force intraday data fetch
+                tk = yf.Ticker(mapped)
+                df = tk.history(period='5d', interval='15m')
+                if df is not None:
+                    if isinstance(df.columns, pd.MultiIndex):
+                        df.columns = df.columns.get_level_values(0)
         
         # Try getting exact real-time price from Google Finance first
         live_price = get_realtime_price(symbol, mapped)
@@ -1009,17 +1027,19 @@ def page_prediction():
                     pred = st.session_state.engine.predict(symbol, prices, volumes, sent)
                     if pred:
                         sig_cls = {'BUY':'signal-buy','SELL':'signal-sell','HOLD':'signal-hold'}
-                        sig_emoji = {'BUY':'🟢 BUY','SELL':'🔴 SELL','HOLD':'🟡 HOLD'}
+                        
+                        # Dynamic labels for timeframe
+                        lbls = ["TODAY", "TOMORROW", "DAY AFTER"] if "Daily" in timeframe else ["NEXT 30m", "NEXT 60m", "NEXT 90m"]
                         
                         tc1, tc2, tc3 = st.columns(3)
                         with tc1:
-                            st.markdown(f'<div class="{sig_cls[pred["today"]["signal"]]}">🎯 TODAY <br>'
+                            st.markdown(f'<div class="{sig_cls[pred["today"]["signal"]]}">🎯 {lbls[0]} <br>'
                                         f'<span style="font-size:0.9rem;font-weight:500;">AI Conf: {pred["today"]["confidence"]:.0%}</span></div>', unsafe_allow_html=True)
                         with tc2:
-                            st.markdown(f'<div class="{sig_cls[pred["tomorrow"]["signal"]]}">🎯 TOMORROW <br>'
+                            st.markdown(f'<div class="{sig_cls[pred["tomorrow"]["signal"]]}">🎯 {lbls[1]} <br>'
                                         f'<span style="font-size:0.9rem;font-weight:500;">AI Conf: {pred["tomorrow"]["confidence"]:.0%}</span></div>', unsafe_allow_html=True)
                         with tc3:
-                            st.markdown(f'<div class="{sig_cls[pred["day_after"]["signal"]]}">🎯 DAY AFTER <br>'
+                             st.markdown(f'<div class="{sig_cls[pred["day_after"]["signal"]]}">🎯 {lbls[2]} <br>'
                                         f'<span style="font-size:0.9rem;font-weight:500;">AI Conf: {pred["day_after"]["confidence"]:.0%}</span></div>', unsafe_allow_html=True)
 
                         st.write("") # Spacer
