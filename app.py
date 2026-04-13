@@ -1194,7 +1194,15 @@ def page_screener():
         screen_list = list(dict.fromkeys(DASHBOARD_CATEGORIES['🏛️ Indices'] + 
                                        DASHBOARD_CATEGORIES['🔵 Tata Group'] + 
                                        DASHBOARD_CATEGORIES['🏢 Adani Group'] +
-                                       DASHBOARD_CATEGORIES['💻 IT & Software']))
+                                       DASHBOARD_CATEGORIES['💻 IT & Software'] +
+                                       DASHBOARD_CATEGORIES['🏦 Public Banks'] +
+                                       DASHBOARD_CATEGORIES['🏧 Private Banks'] +
+                                       DASHBOARD_CATEGORIES['💊 Pharma'] +
+                                       DASHBOARD_CATEGORIES['🛒 FMCG'] +
+                                       DASHBOARD_CATEGORIES['🚗 Auto']))
+        
+        # Limit to 100 stocks for performance if needed, but here we try all for thoroughness
+        screen_list = screen_list[:120] 
         
         matches = []
         prog = st.progress(0, text="Scanning Market Pulse...")
@@ -1241,23 +1249,22 @@ def page_screener():
                 
                 if pass_rsi and pass_vol and pass_pat and pass_pe:
                     info = get_price_info(sym, 2)
-                    
-                    # NEW: Market News Collector for the matched stock
-                    news_items = fetch_market_news(f"{sym} share stock news")
-                    lat_news = news_items[0]['title'] if news_items else "No recent news"
-                    n_sent = score_headline(lat_news)
-                    n_label = "🟢 Positive" if n_sent > 0 else "🔴 Negative" if n_sent < 0 else "⚖️ Neutral"
-                    
-                    matches.append({
-                        'Stock': sym,
-                        'Price': f"{info['currency']}{info['price']:,.2f}",
-                        'Change%': f"{info['pct']:+.2f}%",
-                        'RSI': f"{rsi:.1f}",
-                        'P/E': f"{fetch_fundamentals(mapped)['pe']:.1f}" if fetch_fundamentals(mapped) else "N/A",
-                        'Vol': f"{vol_ratio:.1fx}",
-                        'Pattern': pat_res['pattern'],
-                        'Latest News': lat_news
-                    })
+                    if info:
+                        # NEW: Market News Collector for the matched stock
+                        news_items = fetch_market_news(f"{sym} share stock news")
+                        lat_news = news_items[0]['title'] if news_items else "No recent news"
+                        
+                        matches.append({
+                            'Stock': sym,
+                            'Price': f"{info['currency']}{info['price']:,.2f}",
+                            'Change%': f"{info['pct']:+.2f}%",
+                            'RSI': f"{rsi:.1f}",
+                            'P/E': f"{f_stats['pe']:.1f}" if (pe_filter != "Any" and f_stats) else 
+                                   f"{fetch_fundamentals(mapped)['pe']:.1f}" if fetch_fundamentals(mapped) else "N/A",
+                            'Vol': f"{vol_ratio:.1fx}",
+                            'Pattern': pat_res['pattern'],
+                            'Latest News': lat_news
+                        })
         prog.empty()
         
         if matches:
