@@ -693,7 +693,7 @@ class AIEngine:
             self.models[symbol][day] = {'rf': rf, 'gb': gb, 'acc': (rf.score(Xte,yte) + gb.score(Xte,yte))/2}
             
         self.scalers[symbol] = sc
-        return {'d1_acc': self.models[symbol]['d1']['acc'], 'd2_acc': self.models[symbol]['d2']['acc'], 'd4_acc': self.models[symbol]['d4']['acc']}
+        return {'d1_acc': self.models[symbol]['d1']['acc'], 'd2_acc': self.models[symbol]['d2']['acc'], 'd3_acc': self.models[symbol]['d3']['acc'], 'd4_acc': self.models[symbol]['d4']['acc']}
 
     def predict(self, symbol, prices, volumes, news_sent=0.0, intraday=False):
         if symbol not in self.models: return None
@@ -1063,10 +1063,15 @@ def page_prediction():
                                         f'</div>', unsafe_allow_html=True)
                         
                         st.subheader("🤖 Model Accuracy")
-                        mc1,mc2,mc3 = st.columns(3)
-                        mc1.metric("1-Day Accuracy", f"{metrics['d1_acc']:.1%}")
-                        mc2.metric("2-Day Accuracy", f"{metrics['d2_acc']:.1%}")
-                        mc3.metric("3-Day Accuracy", f"{metrics['d3_acc']:.1%}")
+                        mc1, mc2, mc3 = st.columns(3)
+                        if "Intraday" in pred_mode:
+                            mc1.metric("15-Min Accuracy", f"{metrics['d1_acc']:.1%}")
+                            mc2.metric("30-Min Accuracy", f"{metrics['d2_acc']:.1%}")
+                            mc3.metric("60-Min Accuracy", f"{metrics['d4_acc']:.1%}")
+                        else:
+                            mc1.metric("1-Day Accuracy", f"{metrics['d1_acc']:.1%}")
+                            mc2.metric("2-Day Accuracy", f"{metrics['d2_acc']:.1%}")
+                            mc3.metric("3-Day Accuracy", f"{metrics.get('d3_acc', 0):.1%}")
 
                         if scored_news:
                             st.subheader("📰 News Sentiment")
