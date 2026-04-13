@@ -1263,7 +1263,7 @@ def page_screener():
                             'RSI': f"{rsi:.1f}",
                             'P/E': f"{f_stats['pe']:.1f}" if (pe_filter != "Any" and f_stats) else 
                                    f"{fetch_fundamentals(mapped)['pe']:.1f}" if fetch_fundamentals(mapped) else "N/A",
-                            'Vol': f"{vol_ratio:.1fx}",
+                            'Vol': f"{vol_ratio:.1f}x",
                             'Pattern': pat_res['pattern'],
                             'Latest News': lat_news
                         })
