@@ -1219,7 +1219,7 @@ def page_screener():
                 vols = df['Volume'].dropna().values
                 avg_vol = np.mean(vols[:-1]) if len(vols) > 1 else 1
                 curr_vol = vols[-1]
-                vol_ratio = curr_vol / avg_vol if avg_vol > 0 else 0
+                vol_ratio = float(curr_vol / avg_vol) if avg_vol > 0 else 0.0
                 
                 # Detect Pattern
                 pat_res = detect_candle_pattern(df)
@@ -1240,6 +1240,7 @@ def page_screener():
 
                 # Apply PE Filter
                 pass_pe = True
+                f_stats = None # Initialize to prevent NameError
                 if pe_filter != "Any":
                     f_stats = fetch_fundamentals(mapped)
                     curr_pe = f_stats['pe'] if f_stats else 0
