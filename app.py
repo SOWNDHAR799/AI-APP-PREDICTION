@@ -403,8 +403,8 @@ st.markdown("""
 
 
 # ── Data Helpers ──────────────────────────────────────────────────────────
-@st.cache_data(ttl=120)
-def fetch_stock(raw_symbol, days=200):
+@st.cache_data(ttl=60)
+def fetch_stock(raw_symbol, days=200, interval='1d', period=None):
     symbol = raw_symbol.strip().upper()
     mapped = None
     
@@ -426,10 +426,11 @@ def fetch_stock(raw_symbol, days=200):
             mapped = mapped + '.NS'
 
     try:
+        if not period: period = f'{days}d'
         tk = yf.Ticker(mapped)
-        df = tk.history(period=f'{days}d')
+        df = tk.history(period=period, interval=interval)
         if df is None or df.empty:
-            df = yf.download(mapped, period=f'{days}d', progress=False)
+            df = yf.download(mapped, period=period, interval=interval, progress=False)
         if df is None or df.empty:
             return None, mapped
         if isinstance(df.columns, pd.MultiIndex):
@@ -668,21 +669,22 @@ class AIEngine:
 
     def train(self, symbol, prices, volumes, news_sent=0.0):
         prices = np.array(prices, dtype=float); volumes = np.array(volumes, dtype=float)
-        X, y1, y2, y3 = [], [], [], []
-        for i in range(25, len(prices)-3):
+        X, y1, y2, y3, y4 = [], [], [], [], []
+        for i in range(25, len(prices)-4):
             f = self._features(prices, volumes, i)
             if f is None: continue
             X.append(f)
-            y1.append(1 if prices[i+1]>prices[i] else 0)
-            y2.append(1 if prices[i+2]>prices[i] else 0)
-            y3.append(1 if prices[i+3]>prices[i] else 0)
+            y1.append(1 if prices[i+1]>prices[i] else 0) # 1 step
+            y2.append(1 if prices[i+2]>prices[i] else 0) # 2 steps
+            y3.append(1 if prices[i+3]>prices[i] else 0) # 3 steps
+            y4.append(1 if prices[i+4]>prices[i] else 0) # 4 steps
             
-        if len(X) < 40: return None
+        if len(X) < 30: return None
         X = np.array(X)
         sc = StandardScaler(); Xs = sc.fit_transform(X)
         
-        self.models[symbol] = {'d1': {}, 'd2': {}, 'd3': {}}
-        for day, labels in zip(['d1','d2','d3'], [y1, y2, y3]):
+        self.models[symbol] = {'d1': {}, 'd2': {}, 'd3': {}, 'd4': {}}
+        for day, labels in zip(['d1','d2','d3','d4'], [y1, y2, y3, y4]):
             y = np.array(labels)
             Xtr,Xte,ytr,yte = train_test_split(Xs, y, test_size=0.2, random_state=42)
             rf = RandomForestClassifier(n_estimators=100, max_depth=6, random_state=42)
@@ -691,9 +693,9 @@ class AIEngine:
             self.models[symbol][day] = {'rf': rf, 'gb': gb, 'acc': (rf.score(Xte,yte) + gb.score(Xte,yte))/2}
             
         self.scalers[symbol] = sc
-        return {'d1_acc': self.models[symbol]['d1']['acc'], 'd2_acc': self.models[symbol]['d2']['acc'], 'd3_acc': self.models[symbol]['d3']['acc']}
+        return {'d1_acc': self.models[symbol]['d1']['acc'], 'd2_acc': self.models[symbol]['d2']['acc'], 'd4_acc': self.models[symbol]['d4']['acc']}
 
-    def predict(self, symbol, prices, volumes, news_sent=0.0):
+    def predict(self, symbol, prices, volumes, news_sent=0.0, intraday=False):
         if symbol not in self.models: return None
         prices = np.array(prices, dtype=float); volumes = np.array(volumes, dtype=float)
         
@@ -704,9 +706,15 @@ class AIEngine:
         Xs_latest = self.scalers[symbol].transform([f_latest])
         Xs_prev = self.scalers[symbol].transform([f_prev])
         
+        # In Intraday: we show NEXT 15m (d1), NEXT 30m (d2), NEXT 60m (d4)
+        # In Daily: we show TODAY (d1), TOMORROW (d1 based on today), DAY AFTER (d2 based on today)
+        steps = ['d1', 'd2', 'd4'] if intraday else ['d1', 'd1', 'd2']
+        feats = [Xs_prev, Xs_latest, Xs_latest] if not intraday else [Xs_latest, Xs_latest, Xs_latest]
+        labels = ['today', 'tomorrow', 'day_after']
+        
         results = {}
-        for label, day_key, feat in zip(['today', 'tomorrow', 'day_after'], ['d1', 'd1', 'd2'], [Xs_prev, Xs_latest, Xs_latest]):
-            m_set = self.models[symbol][day_key]
+        for label, step_key, feat in zip(labels, steps, feats):
+            m_set = self.models[symbol][step_key]
             probs = [m_set[m].predict_proba(feat)[0][1] for m in ['rf', 'gb']]
             up_prob = np.clip(np.mean(probs) + 0.08*news_sent, 0, 1)
             dn_prob = 1 - up_prob
@@ -923,28 +931,10 @@ def page_prediction():
         sym_list = sorted(STOCK_MAP.keys())
         st.write(", ".join(sym_list))
 
-    c1, c2 = st.columns([1, 1])
-    with c1:
-        symbol = st.text_input("💎 Enter Stock Symbol", value="TATASTEEL", help="e.g. RELIANCE, TCS, ZOMATO").upper()
-    with c2:
-        timeframe = st.selectbox("⏳ Analysis Timeframe", ["Daily (Next 3 Days)", "Intraday (Next 1 Hour)"])
-    
-    run = st.button("🧠 Run AI", use_container_width=True)
-
-    if run and symbol:
-        with st.spinner(f"🔍 Analyzing {symbol} in {timeframe} mode..."):
-            days_to_fetch = 200 if "Daily" in timeframe else 5
-            interval = '1d' if "Daily" in timeframe else '15m'
-            
-            # Fetch base data
-            df, mapped = fetch_stock(symbol, days_to_fetch)
-            if "Intraday" in timeframe:
-                # Force intraday data fetch
-                tk = yf.Ticker(mapped)
-                df = tk.history(period='5d', interval='15m')
-                if df is not None:
-                    if isinstance(df.columns, pd.MultiIndex):
-                        df.columns = df.columns.get_level_values(0)
+    if run and symbol.strip():
+        symbol = symbol.strip().upper()
+        with st.spinner(f"📡 Fetching data for {symbol}..."):
+            df, mapped = fetch_stock(symbol, 250)
         
         # Try getting exact real-time price from Google Finance first
         live_price = get_realtime_price(symbol, mapped)
@@ -1005,9 +995,19 @@ def page_prediction():
                 st.markdown(f"**Sector:** {f_data['sector']} | **52W High:** {curr}{f_data['high_52']:,.2f} | **52W Low:** {curr}{f_data['low_52']:,.2f}")
                 st.write("") # Spacer
 
+            # NEW: AI Prediction Mode
+            pred_mode = st.radio("Prediction Mode:", ["📅 Daily (Swing Trade)", "📈 Intraday (Next 1 Hour)"], horizontal=True)
+            
+            # Re-fetch for Intraday mode
+            if "Intraday" in pred_mode:
+                with st.spinner("⚡ Fetching 15m intraday data..."):
+                    df_run, _ = fetch_stock(symbol, interval='15m', period='7d')
+            else:
+                df_run = df
+
             # AI Prediction Logic
-            if df is not None and len(df) > 60:
-                close = df['Close']; vol = df['Volume']
+            if df_run is not None and len(df_run) > 30:
+                close = df_run['Close']; vol = df_run['Volume']
                 if isinstance(close, pd.DataFrame): close = close.iloc[:,0]
                 if isinstance(vol, pd.DataFrame): vol = vol.iloc[:,0]
                 prices = close.dropna().astype(float).tolist()
@@ -1024,22 +1024,24 @@ def page_prediction():
                     metrics = st.session_state.engine.train(symbol, prices, volumes, sent)
                 
                 if metrics:
-                    pred = st.session_state.engine.predict(symbol, prices, volumes, sent)
+                    is_intra = "Intraday" in pred_mode
+                    pred = st.session_state.engine.predict(symbol, prices, volumes, sent, intraday=is_intra)
                     if pred:
                         sig_cls = {'BUY':'signal-buy','SELL':'signal-sell','HOLD':'signal-hold'}
+                        sig_emoji = {'BUY':'🟢 BUY','SELL':'🔴 SELL','HOLD':'🟡 HOLD'}
                         
-                        # Dynamic labels for timeframe
-                        lbls = ["TODAY", "TOMORROW", "DAY AFTER"] if "Daily" in timeframe else ["NEXT 30m", "NEXT 60m", "NEXT 90m"]
+                        # Dynamic Labels
+                        l1, l2, l3 = ("NEXT 15m", "NEXT 30m", "NEXT 60m") if "Intraday" in pred_mode else ("TODAY", "TOMORROW", "DAY AFTER")
                         
                         tc1, tc2, tc3 = st.columns(3)
                         with tc1:
-                            st.markdown(f'<div class="{sig_cls[pred["today"]["signal"]]}">🎯 {lbls[0]} <br>'
+                            st.markdown(f'<div class="{sig_cls[pred["today"]["signal"]]}">🎯 {l1} <br>'
                                         f'<span style="font-size:0.9rem;font-weight:500;">AI Conf: {pred["today"]["confidence"]:.0%}</span></div>', unsafe_allow_html=True)
                         with tc2:
-                            st.markdown(f'<div class="{sig_cls[pred["tomorrow"]["signal"]]}">🎯 {lbls[1]} <br>'
+                            st.markdown(f'<div class="{sig_cls[pred["tomorrow"]["signal"]]}">🎯 {l2} <br>'
                                         f'<span style="font-size:0.9rem;font-weight:500;">AI Conf: {pred["tomorrow"]["confidence"]:.0%}</span></div>', unsafe_allow_html=True)
                         with tc3:
-                             st.markdown(f'<div class="{sig_cls[pred["day_after"]["signal"]]}">🎯 {lbls[2]} <br>'
+                            st.markdown(f'<div class="{sig_cls[pred["day_after"]["signal"]]}">🎯 {l3} <br>'
                                         f'<span style="font-size:0.9rem;font-weight:500;">AI Conf: {pred["day_after"]["confidence"]:.0%}</span></div>', unsafe_allow_html=True)
 
                         st.write("") # Spacer
