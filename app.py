@@ -570,7 +570,7 @@ def detect_candle_pattern(df):
     upper_shadow = cH - max(cO, cC)
     
     # Hammer
-    if lower_shadow > 2.5 * cBody and upper_shadow < cBody * 0.5:
+    if lower_shadow > 2.0 * cBody and upper_shadow < cBody * 0.5:
         if cC > cO: return {"pattern": "Bullish Hammer 🔨", "advice": f"**BUY ENTRY**: Buy if next candle crosses {cH:,.2f}. **STOP LOSS**: {cL:,.2f}"}
         else: return {"pattern": "Hanging Man 🔻", "advice": f"**SELL ENTRY**: Wait for next candle to close below {cL:,.2f} before shorting."}
         
@@ -1243,9 +1243,10 @@ def page_screener():
                 if pe_filter != "Any":
                     f_stats = fetch_fundamentals(mapped)
                     curr_pe = f_stats['pe'] if f_stats else 0
-                    if pe_filter == "Under 15": pass_pe = 0 < curr_pe < 15
-                    elif pe_filter == "Under 25": pass_pe = 0 < curr_pe < 25
-                    elif pe_filter == "Under 40": pass_pe = 0 < curr_pe < 40
+                    if curr_pe > 0: # Only filter if PE data exists
+                        if pe_filter == "Under 15": pass_pe = curr_pe < 15
+                        elif pe_filter == "Under 25": pass_pe = curr_pe < 25
+                        elif pe_filter == "Under 40": pass_pe = curr_pe < 40
                 
                 if pass_rsi and pass_vol and pass_pat and pass_pe:
                     info = get_price_info(sym, 2)
