@@ -505,7 +505,8 @@ def get_price_info(symbol, days=5):
     if len(close) == 0:
         return None
     cur = float(close.iloc[-1])
-    prev = float(close.iloc[-2]) if len(close) > 1 else cur
+    # Improved 'prev' logic: Try to get actual previous close from bar data
+    prev = float(close.iloc[-2]) if len(close) >= 2 else cur
     
     # Try getting exact real-time price from Google Finance to fix Yahoo latency
     live_price = get_realtime_price(symbol, mapped)
