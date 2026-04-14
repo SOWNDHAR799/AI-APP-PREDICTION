@@ -474,16 +474,17 @@ def get_usd_inr():
 
 import re
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=5)
 def get_realtime_price(symbol, mapped):
-    """Fetch exact live price from Google Finance for better accuracy"""
-    gf_sym = symbol
+    """Fetch exact live price from Google Finance for near-zero delay"""
+    # Map for Google Finance (e.g. NSE:RELIANCE)
     if mapped.endswith('.NS'): gf_sym = mapped.replace('.NS', '') + ':NSE'
     elif mapped.endswith('.BO'): gf_sym = mapped.replace('.BO', '') + ':BOM'
     elif mapped == '^NSEI': gf_sym = 'NIFTY_50:INDEXNSE'
     elif mapped == '^BSESN': gf_sym = 'SENSEX:INDEXBOM'
     elif mapped == '^NSEBANK': gf_sym = 'NIFTY_BANK:INDEXNSE'
-    else: return None
+    elif mapped in {'GC=F', 'SI=F', 'CL=F'}: return None # Skip commodities for now
+    else: gf_sym = f"{mapped}:NASDAQ" # Default to NASDAQ for US stocks
     
     try:
         r = requests.get(f'https://www.google.com/finance/quote/{gf_sym}', timeout=3)
@@ -940,8 +941,21 @@ def main():
     if 'engine' not in st.session_state:
         st.session_state.engine = AIEngine()
 
-    # ── Ticker Bar (Groww-style top bar) ──────────────────────────────
+    # ── Ticker Bar & Live Refresh ─────────────────────────────────────
     ticker_syms = ['NIFTY', 'SENSEX', 'BANKNIFTY']
+    lc1, lc2 = st.columns([5, 1])
+    with lc2:
+        live_mode = st.checkbox("📡 Live Mode", help="Auto-refreshes every 30s")
+    
+    if live_mode:
+        st.markdown("""
+            <script>
+            setTimeout(function(){
+               window.location.reload();
+            }, 30000);
+            </script>
+        """, unsafe_allow_html=True)
+
     ticker_html = '<div class="ticker-bar">'
     for ts in ticker_syms:
         info = get_price_info(ts, 5)
