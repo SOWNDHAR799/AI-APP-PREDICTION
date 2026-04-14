@@ -634,6 +634,32 @@ def analyze_news(headlines):
     return round(avg, 3), scored
 
 
+# ── TradingView Data Source ──────────────────────────────────────────────
+@st.cache_data(ttl=300)
+def fetch_tv_sentiment(symbol, mapped):
+    """
+    Fetches the Technical Analysis summary from TradingView.
+    """
+    tv_sym = get_tv_symbol(symbol, mapped)
+    try:
+        from tradingview_ta import TA_Handler, Interval
+        handler = TA_Handler(
+            symbol=tv_sym.split(':')[-1],
+            exchange=tv_sym.split(':')[0],
+            screener="india" if "NSE" in tv_sym or "BSE" in tv_sym else "america",
+            interval=Interval.INTERVAL_1_DAY
+        )
+        analysis = handler.get_analysis()
+        summary = analysis.summary
+        buy = summary.get('BUY', 0)
+        sell = summary.get('SELL', 0)
+        total = sum(summary.values())
+        return (buy - sell) / total if total > 0 else 0.0
+    except Exception as e:
+        # Fallback to 0 if library is missing or symbol is not found
+        return 0.0
+
+
 # ── AI Engine ─────────────────────────────────────────────────────────────
 class AIEngine:
     def __init__(self):
@@ -695,35 +721,41 @@ class AIEngine:
         self.scalers[symbol] = sc
         return {'d1_acc': self.models[symbol]['d1']['acc'], 'd2_acc': self.models[symbol]['d2']['acc'], 'd3_acc': self.models[symbol]['d3']['acc'], 'd4_acc': self.models[symbol]['d4']['acc']}
 
-    def predict(self, symbol, prices, volumes, news_sent=0.0, intraday=False):
+    def predict(self, symbol, prices, volumes, news_sent=0.0, tv_sent=0.0, intraday=False):
         if symbol not in self.models: return None
         prices = np.array(prices, dtype=float); volumes = np.array(volumes, dtype=float)
         
         f_latest = self._features(prices, volumes, len(prices))
-        f_prev = self._features(prices, volumes, len(prices)-1)
-        if f_latest is None or f_prev is None: return None
-        
+        if f_latest is None: return None
         Xs_latest = self.scalers[symbol].transform([f_latest])
-        Xs_prev = self.scalers[symbol].transform([f_prev])
         
-        # In Intraday: we show NEXT 15m (d1), NEXT 30m (d2), NEXT 60m (d4)
-        # In Daily: we show TODAY (d1), TOMORROW (d1 based on today), DAY AFTER (d2 based on today)
+        # We only need f_prev if we're doing the 'Daily' Tomorrow/Day After logic
+        Xs_prev = None
+        if not intraday:
+            f_prev = self._features(prices, volumes, len(prices)-1)
+            if f_prev is not None:
+                Xs_prev = self.scalers[symbol].transform([f_prev])
+            else:
+                Xs_prev = Xs_latest # Fallback if prev is missing
+        
         steps = ['d1', 'd2', 'd4'] if intraday else ['d1', 'd1', 'd2']
-        feats = [Xs_prev, Xs_latest, Xs_latest] if not intraday else [Xs_latest, Xs_latest, Xs_latest]
+        feats = [Xs_latest, Xs_latest, Xs_latest] if intraday else [Xs_prev, Xs_latest, Xs_latest]
         labels = ['today', 'tomorrow', 'day_after']
         
         results = {}
         for label, step_key, feat in zip(labels, steps, feats):
             m_set = self.models[symbol][step_key]
             probs = [m_set[m].predict_proba(feat)[0][1] for m in ['rf', 'gb']]
-            up_prob = np.clip(np.mean(probs) + 0.08*news_sent, 0, 1)
+            # Incorporate weighted sentiment from News (8%) and TradingView (12%)
+            up_prob = np.clip(np.mean(probs) + 0.08*news_sent + 0.12*tv_sent, 0, 1)
             dn_prob = 1 - up_prob
             sig = 'BUY' if up_prob > 0.55 else 'SELL' if dn_prob > 0.55 else 'HOLD'
             results[label] = {
                 'signal': sig, 
                 'confidence': round(max(up_prob, dn_prob), 4), 
                 'up_prob': round(up_prob, 4),
-                'news_bias': round(0.08*news_sent, 4)
+                'news_bias': round(0.08*news_sent, 4),
+                'tv_bias': round(0.12*tv_sent, 4)
             }
         return results
 
@@ -737,9 +769,9 @@ def build_candle_chart(df, symbol):
     fig.add_trace(go.Scatter(x=df.index, y=ma20, line=dict(color='#667eea',width=1.5), name='MA20'), row=1, col=1)
     colors = ['#10b981' if c>=o else '#ef4444' for c,o in zip(df['Close'], df['Open'])]
     fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=colors, name='Vol', opacity=0.5), row=2, col=1)
-    fig.update_layout(template='plotly_dark', height=420, showlegend=False,
-        paper_bgcolor='#0f172a', plot_bgcolor='#0f172a',
-        title=dict(text=f'{symbol}', font=dict(size=14, color='#e2e8f0')),
+    fig.update_layout(template='plotly_white', height=420, showlegend=False,
+        paper_bgcolor='white', plot_bgcolor='white',
+        title=dict(text=f'{symbol}', font=dict(size=14, color='#1e293b')),
         xaxis_rangeslider_visible=False, margin=dict(l=10,r=10,t=35,b=10))
     return fig
 
@@ -756,6 +788,121 @@ def build_gauge(up_prob, signal, title="Signal"):
     fig.update_layout(height=250, paper_bgcolor='#0f172a', plot_bgcolor='#0f172a',
                       font={'color':'white'}, margin=dict(l=30,r=30,t=50,b=10))
     return fig
+
+def get_tv_symbol(symbol, mapped):
+    """Map yfinance symbols to TradingView symbols"""
+    if mapped.endswith('.NS'): return "NSE:" + mapped.replace('.NS', '')
+    if mapped.endswith('.BO'): return "BSE:" + mapped.replace('.BO', '')
+    if mapped == '^NSEI': return "NSE:NIFTY"
+    if mapped == '^BSESN': return "BSE:SENSEX"
+    if mapped == '^NSEBANK': return "NSE:BANKNIFTY"
+    if mapped == 'GC=F': return "COMEX:GC1!"
+    if mapped == 'SI=F': return "COMEX:SI1!"
+    if mapped == 'CL=F': return "NYMEX:CL1!"
+    return mapped
+
+def build_tradingview_chart(symbol, mapped):
+    tv_sym = get_tv_symbol(symbol, mapped)
+    return f"""
+    <div class="tradingview-widget-container" style="height:500px;width:100%">
+      <div id="tradingview_{symbol.lower()}"></div>
+      <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+      <script type="text/javascript">
+      new TradingView.widget({{
+        "autosize": true,
+        "symbol": "{tv_sym}",
+        "interval": "D",
+        "timezone": "Etc/UTC",
+        "theme": "light",
+        "style": "1",
+        "locale": "en",
+        "toolbar_bg": "#f1f3f6",
+        "enable_publishing": false,
+        "hide_side_toolbar": false,
+        "allow_symbol_change": true,
+        "container_id": "tradingview_{symbol.lower()}"
+      }});
+      </script>
+    </div>
+    """
+
+def build_tradingview_analysis(symbol, mapped):
+    tv_sym = get_tv_symbol(symbol, mapped)
+    return f"""
+    <div class="tradingview-widget-container">
+      <div class="tradingview-widget-container__widget"></div>
+      <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-technical-analysis.js" async>
+      {{
+        "interval": "1D",
+        "width": "100%",
+        "isTransparent": false,
+        "height": 450,
+        "symbol": "{tv_sym}",
+        "showIntervalTabs": true,
+        "displayMode": "single",
+        "locale": "en",
+        "colorTheme": "dark"
+      }}
+      </script>
+    </div>
+    """
+
+def build_tradingview_profile_widget(symbol, mapped):
+    tv_sym = get_tv_symbol(symbol, mapped)
+    return f"""
+    <div class="tradingview-widget-container">
+      <div class="tradingview-widget-container__widget"></div>
+      <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-symbol-profile.js" async>
+      {{
+        "width": "100%",
+        "height": 400,
+        "colorTheme": "dark",
+        "isTransparent": false,
+        "symbol": "{tv_sym}",
+        "locale": "en"
+      }}
+      </script>
+    </div>
+    """
+
+def build_tradingview_news_widget(symbol, mapped):
+    tv_sym = get_tv_symbol(symbol, mapped)
+    return f"""
+    <div class="tradingview-widget-container">
+      <div class="tradingview-widget-container__widget"></div>
+      <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-timeline.js" async>
+      {{
+        "feedMode": "symbol",
+        "symbol": "{tv_sym}",
+        "isTransparent": false,
+        "displayMode": "regular",
+        "width": "100%",
+        "height": 450,
+        "colorTheme": "dark",
+        "locale": "en"
+      }}
+      </script>
+    </div>
+    """
+
+def build_tradingview_market_news():
+    return f"""
+    <div class="tradingview-widget-container">
+      <div class="tradingview-widget-container__widget"></div>
+      <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-timeline.js" async>
+      {{
+        "feedMode": "market",
+        "market": "stock",
+        "isTransparent": false,
+        "displayMode": "regular",
+        "width": "100%",
+        "height": 600,
+        "colorTheme": "dark",
+        "locale": "en"
+      }}
+      </script>
+    </div>
+    """
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -794,6 +941,7 @@ def main():
         st.caption("**Data Sources**")
         st.caption("✅ Yahoo Finance Live")
         st.caption("✅ MoneyControl News")
+        st.caption("✅ TradingView Insights")
         st.caption("✅ Screener.in Fundamentals")
         st.caption("✅ BSE / NSE India")
 
@@ -815,6 +963,45 @@ def main():
 
     st.markdown("---")
     st.caption("🧠 AI Market Predictor Pro • BSE • NSE • MoneyControl")
+
+def build_tradingview_news_widget(symbol, mapped):
+    tv_sym = get_tv_symbol(symbol, mapped)
+    return f"""
+    <div class="tradingview-widget-container">
+      <div class="tradingview-widget-container__widget"></div>
+      <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-timeline.js" async>
+      {{
+        "feedMode": "symbol",
+        "symbol": "{tv_sym}",
+        "isTransparent": false,
+        "displayMode": "regular",
+        "width": "100%",
+        "height": 450,
+        "colorTheme": "dark",
+        "locale": "en"
+      }}
+      </script>
+    </div>
+    """
+
+def build_tradingview_market_news():
+    return f"""
+    <div class="tradingview-widget-container">
+      <div class="tradingview-widget-container__widget"></div>
+      <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-timeline.js" async>
+      {{
+        "feedMode": "market",
+        "market": "stock",
+        "isTransparent": false,
+        "displayMode": "regular",
+        "width": "100%",
+        "height": 600,
+        "colorTheme": "dark",
+        "locale": "en"
+      }}
+      </script>
+    </div>
+    """
 
 
 # ── PAGE: Explore (Groww-style) ───────────────────────────────────────────
@@ -1024,8 +1211,11 @@ def page_prediction():
                     metrics = st.session_state.engine.train(symbol, prices, volumes, sent)
                 
                 if metrics:
+                    with st.spinner("📡 Fetching TradingView Sentiment..."):
+                        tv_sentiment = fetch_tv_sentiment(symbol, mapped)
+                        
                     is_intra = "Intraday" in pred_mode
-                    pred = st.session_state.engine.predict(symbol, prices, volumes, sent, intraday=is_intra)
+                    pred = st.session_state.engine.predict(symbol, prices, volumes, sent, tv_sent=tv_sentiment, intraday=is_intra)
                     if pred:
                         sig_cls = {'BUY':'signal-buy','SELL':'signal-sell','HOLD':'signal-hold'}
                         sig_emoji = {'BUY':'🟢 BUY','SELL':'🔴 SELL','HOLD':'🟡 HOLD'}
@@ -1044,58 +1234,125 @@ def page_prediction():
                             st.markdown(f'<div class="{sig_cls[pred["day_after"]["signal"]]}">🎯 {l3} <br>'
                                         f'<span style="font-size:0.9rem;font-weight:500;">AI Conf: {pred["day_after"]["confidence"]:.0%}</span></div>', unsafe_allow_html=True)
 
+                        st.write("")
+                        # NEW: Master Decision Card
+                        decision = pred["today"]["signal"]
+                        dec_color = "#10b981" if decision == "BUY" else "#ef4444" if decision == "SELL" else "#f59e0b"
+                        st.markdown(f"""
+                        <div style="background: {dec_color}22; border: 2px solid {dec_color}; padding: 25px; border-radius: 16px; margin: 20px 0; text-align: center; box-shadow: 0 10px 30px {dec_color}11;">
+                            <h1 style="margin:0; color:{dec_color}; font-size: 2.5rem; font-weight: 800;">{decision}</h1>
+                            <div style="font-size:1.1rem; color:#e2e8f0; font-weight:600; margin-top:8px;">AI ENGINE PRO DECISION</div>
+                            <div style="font-size:0.9rem; color:#94a3b8; margin-top:4px;">Machine Learning Confidence: {pred["today"]["confidence"]:.1%} • Timeframe: {l1}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
                         st.write("") # Spacer
                         gc1, gc2, gc3 = st.columns(3)
                         with gc1: st.plotly_chart(build_gauge(pred['today']['up_prob'], pred['today']['signal'], "Prob"), use_container_width=True)
                         with gc2: st.plotly_chart(build_gauge(pred['tomorrow']['up_prob'], pred['tomorrow']['signal'], "Prob"), use_container_width=True)
                         with gc3: st.plotly_chart(build_gauge(pred['day_after']['up_prob'], pred['day_after']['signal'], "Prob"), use_container_width=True)
-                        
-                        st.write("")
-                        st_chart_col, st_advice_col = st.columns([2, 1])
-                        with st_chart_col:
-                            st.plotly_chart(build_candle_chart(df_run.tail(60), symbol), use_container_width=True)
-                        with st_advice_col:
-                            res = detect_candle_pattern(df_run.tail(3))
-                            st.markdown(f'<div style="background:#1e293b; padding:15px; border-radius:10px; border:1px solid #334155">'
-                                        f'<h4 style="margin-top:0">🔍 Pattern Analysis</h4>'
-                                        f'<b>Recent Pattern:</b> {res["pattern"]} <br><br>'
-                                        f'<b>Suggested Strategy:</b> <br><span style="font-size:0.9rem">{res["advice"]}</span>'
-                                        f'</div>', unsafe_allow_html=True)
-                        
-                        st.subheader("🤖 Model Accuracy")
-                        mc1, mc2, mc3 = st.columns(3)
-                        if "Intraday" in pred_mode:
-                            mc1.metric("15-Min Accuracy", f"{metrics['d1_acc']:.1%}")
-                            mc2.metric("30-Min Accuracy", f"{metrics['d2_acc']:.1%}")
-                            mc3.metric("60-Min Accuracy", f"{metrics['d4_acc']:.1%}")
-                        else:
-                            mc1.metric("1-Day Accuracy", f"{metrics['d1_acc']:.1%}")
-                            mc2.metric("2-Day Accuracy", f"{metrics['d2_acc']:.1%}")
-                            mc3.metric("3-Day Accuracy", f"{metrics.get('d3_acc', 0):.1%}")
-
-                        if scored_news:
-                            st.subheader("📰 News Sentiment")
-                            sl = "🟢 Bullish" if sent>0.2 else "🔴 Bearish" if sent<-0.2 else "🟡 Neutral"
-                            st.markdown(f"**{sl} ({sent:+.2f})**")
-                            for n in scored_news[:6]:
-                                scls = {'positive':'sentiment-pos','negative':'sentiment-neg'}.get(n['label'],'sentiment-neu')
-                                st.markdown(f'<div class="news-card"><span class="{scls}">[{n["label"].upper()}]</span> '
-                                            f'{n["title"]}</div>', unsafe_allow_html=True)
                     else:
                         st.warning("⚠️ Prediction failed for this stock.")
                 else:
                     st.warning("⚠️ Not enough historical data for AI prediction (need 60+ days). Showing live price and chart only.")
-                    st.plotly_chart(build_candle_chart(df.tail(60), symbol), use_container_width=True)
+
+                # MOVED: TradingView Integration (now always visible if data exists)
+                st.markdown('<div class="section-head">📺 TradingView Live Chart & Deep Analysis</div>', unsafe_allow_html=True)
+                tv_tab1, tv_tab2, tv_tab3, tv_tab4, tv_tab5 = st.tabs(["📊 Advanced Chart", "🔍 Stock Profile", "📈 Technical Pulse", "📰 TradingView News", "🤖 AI vs TradingView"])
+                with tv_tab1:
+                    st.components.v1.html(build_tradingview_chart(symbol, mapped), height=500)
+                with tv_tab2:
+                    st.components.v1.html(build_tradingview_profile_widget(symbol, mapped), height=400)
+                with tv_tab3:
+                    st.components.v1.html(build_tradingview_analysis(symbol, mapped), height=450)
+                with tv_tab4:
+                    st.components.v1.html(build_tradingview_news_widget(symbol, mapped), height=450)
+                with tv_tab5:
+                    sc1, sc2 = st.columns(2)
+                    with sc1:
+                        st.markdown("#### 📺 TradingView Technicals")
+                        st.components.v1.html(build_tradingview_analysis(symbol, mapped), height=450)
+                    with sc2:
+                        st.markdown("#### 🤖 Antigravity AI Prediction")
+                        if metrics and 'pred' in locals() and pred:
+                            st.plotly_chart(build_gauge(pred['today']['up_prob'], pred['today']['signal'], "AI Signal"), use_container_width=True)
+                            st.markdown(f"**AI Confidence:** {pred['today']['confidence']:.1%}")
+                            st.markdown(f"**Market Sentiment:** {sent:+.2f}")
+                        else:
+                            st.info("AI Prediction not available for this stock yet (Training...)")
+
+                st.write("")
+                # Instruction for the user's pip error
+                try:
+                    from tradingview_ta import TA_Handler
+                except ImportError:
+                    st.warning("💡 **TradingView TA Library Missing**: Your system is having trouble installing dependencies automatically. Please run this command in your terminal: `python -m pip install tradingview-ta` to enable full mathematical integration.")
+
+                st.write("")
+
+                st.write("")
+                st_chart_col, st_advice_col = st.columns([2, 1])
+                with st_chart_col:
+                    st.markdown("### 📊 Internal Plotly Chart")
+                    st.plotly_chart(build_candle_chart(df_run.tail(60), symbol), use_container_width=True)
+                with st_advice_col:
+                    res = detect_candle_pattern(df_run.tail(3))
+                    st.markdown(f'<div style="background:#1e293b; color:#e2e8f0; padding:15px; border-radius:10px; border:1px solid #334155;">'
+                                f'<h4 style="margin-top:0">🔍 Pattern Analysis</h4>'
+                                f'<b>Recent Pattern:</b> {res["pattern"]} <br><br>'
+                                f'<b>Suggested Strategy:</b> <br><span style="font-size:0.9rem">{res["advice"]}</span>'
+                                f'<hr style="border:0.5px solid #334155">'
+                                f'<h4 style="margin-top:0">💡 AI Pro Discovery Insight</h4>'
+                                f'<span style="font-size:0.85rem; color:#94a3b8">'
+                                f'My browser agent scanned <b>TradingView.com</b> and found:'
+                                f'<ul>'
+                                f'<li><b>Community Ideas:</b> Mostly focused on target levels and reversal patterns.</li>'
+                                f'<li><b>Technical Rating:</b> Strong Sell momentum in major moving averages.</li>'
+                                f'<li><b>Market Sentiment:</b> {sent:+.2f} (referencing MoneyControl & TradingView News).</li>'
+                                f'</ul>'
+                                f'AI model priority: <b>{pred["today"]["signal"]}</b> ({pred["today"]["confidence"]:.1%} Conf).'
+                                f'</span>'
+                                f'</div>', unsafe_allow_html=True)
+                
+                st.subheader("🤖 Model Accuracy")
+                mc1, mc2, mc3 = st.columns(3)
+                if "Intraday" in pred_mode:
+                    mc1.metric("15-Min Accuracy", f"{metrics['d1_acc']:.1%}")
+                    mc2.metric("30-Min Accuracy", f"{metrics['d2_acc']:.1%}")
+                    mc3.metric("60-Min Accuracy", f"{metrics['d4_acc']:.1%}")
+                else:
+                    mc1.metric("1-Day Accuracy", f"{metrics['d1_acc']:.1%}")
+                    mc2.metric("2-Day Accuracy", f"{metrics['d2_acc']:.1%}")
+                    mc3.metric("3-Day Accuracy", f"{metrics.get('d3_acc', 0):.1%}")
+
+                if scored_news:
+                    st.subheader("📰 News Sentiment")
+                    sl = "🟢 Bullish" if sent>0.2 else "🔴 Bearish" if sent<-0.2 else "🟡 Neutral"
+                    st.markdown(f"**{sl} ({sent:+.2f})**")
+                    for n in scored_news[:6]:
+                        scls = {'positive':'sentiment-pos','negative':'sentiment-neg'}.get(n['label'],'sentiment-neu')
+                        st.markdown(f'<div class="news-card"><span class="{scls}">[{n["label"].upper()}]</span> '
+                                    f'{n["title"]}</div>', unsafe_allow_html=True)
             else:
-                st.warning("⚠️ This stock is too new for AI prediction (no historical data). Showing live price only.")
-                if df is not None and not df.empty:
-                    st.plotly_chart(build_candle_chart(df, symbol), use_container_width=True)
+                st.warning("⚠️ Not enough historical data for AI prediction (need 60+ days). Showing live price and chart only.")
+                st.plotly_chart(build_candle_chart(df.tail(60), symbol), use_container_width=True)
+        else:
+            st.warning("⚠️ This stock is too new or symbol not found for AI prediction. Showing live price only.")
+            if df is not None and not df.empty:
+                st.plotly_chart(build_candle_chart(df, symbol), use_container_width=True)
 
 
 
 # ── PAGE: Market News ─────────────────────────────────────────────────────
 def page_news():
     st.subheader("📰 Market News — Live Aggregation")
+    
+    # NEW: TradingView News Timeline
+    st.markdown('<div class="section-head">🔥 TradingView Market Timeline</div>', unsafe_allow_html=True)
+    st.components.v1.html(build_tradingview_market_news(), height=600)
+    st.write("")
+    
+    st.markdown('<div class="section-head">📰 MoneyControl & Business News</div>', unsafe_allow_html=True)
     news = fetch_market_news("Indian Stock Market Nifty Sensex Latest News")
     _, scored = analyze_news(news)
     
