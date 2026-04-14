@@ -377,8 +377,8 @@ st.markdown("""
 .section-head { font-size: 1.1rem; font-weight: 700; color: #e2e8f0; margin: 1.2rem 0 0.6rem 0; }
 
 /* Signal Cards */
-.signal-buy { background: linear-gradient(135deg, #059669, #10b981); color: white; padding: 1.2rem; border-radius: 14px; text-align: center; font-size: 1.2rem; font-weight: 700; box-shadow: 0 6px 24px rgba(16,185,129,0.3); }
-.signal-sell { background: linear-gradient(135deg, #dc2626, #ef4444); color: white; padding: 1.2rem; border-radius: 14px; text-align: center; font-size: 1.2rem; font-weight: 700; box-shadow: 0 6px 24px rgba(239,68,68,0.3); }
+.signal-buy { background: linear-gradient(135deg, #00b386, #10b981); color: white; padding: 1.2rem; border-radius: 14px; text-align: center; font-size: 1.2rem; font-weight: 700; box-shadow: 0 6px 24px rgba(0,179,134,0.3); }
+.signal-sell { background: linear-gradient(135deg, #eb5b3c, #ef4444); color: white; padding: 1.2rem; border-radius: 14px; text-align: center; font-size: 1.2rem; font-weight: 700; box-shadow: 0 6px 24px rgba(235,91,60,0.3); }
 .signal-hold { background: linear-gradient(135deg, #d97706, #f59e0b); color: white; padding: 1.2rem; border-radius: 14px; text-align: center; font-size: 1.2rem; font-weight: 700; box-shadow: 0 6px 24px rgba(245,158,11,0.3); }
 
 /* News Card */
@@ -762,17 +762,40 @@ class AIEngine:
 
 # ── Charts ────────────────────────────────────────────────────────────────
 def build_candle_chart(df, symbol):
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.75,0.25], vertical_spacing=0.03)
-    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'],
-        increasing_line_color='#10b981', decreasing_line_color='#ef4444', name='Price'), row=1, col=1)
+    # Groww Theme Colors
+    UP_COLOR = '#00b386'
+    DOWN_COLOR = '#eb5b3c'
+    
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.8, 0.2], vertical_spacing=0.02)
+    
+    # Candlestick
+    fig.add_trace(go.Candlestick(
+        x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'],
+        increasing_line_color=UP_COLOR, decreasing_line_color=DOWN_COLOR,
+        increasing_fillcolor=UP_COLOR, decreasing_fillcolor=DOWN_COLOR,
+        name='Price'
+    ), row=1, col=1)
+    
+    # Simple Moving Average (subtle)
     ma20 = df['Close'].rolling(20).mean()
-    fig.add_trace(go.Scatter(x=df.index, y=ma20, line=dict(color='#667eea',width=1.5), name='MA20'), row=1, col=1)
-    colors = ['#10b981' if c>=o else '#ef4444' for c,o in zip(df['Close'], df['Open'])]
-    fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=colors, name='Vol', opacity=0.5), row=2, col=1)
-    fig.update_layout(template='plotly_white', height=420, showlegend=False,
+    fig.add_trace(go.Scatter(x=df.index, y=ma20, line=dict(color='#667eea', width=1, dash='dot'), name='MA20', opacity=0.6), row=1, col=1)
+    
+    # Volume
+    colors = [UP_COLOR if c >= o else DOWN_COLOR for c, o in zip(df['Close'], df['Open'])]
+    fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=colors, name='Vol', opacity=0.3), row=2, col=1)
+    
+    fig.update_layout(
+        template='plotly_white', height=450, showlegend=False,
         paper_bgcolor='white', plot_bgcolor='white',
-        title=dict(text=f'{symbol}', font=dict(size=14, color='#1e293b')),
-        xaxis_rangeslider_visible=False, margin=dict(l=10,r=10,t=35,b=10))
+        hovermode='x unified',
+        xaxis_rangeslider_visible=False,
+        margin=dict(l=5, r=5, t=35, b=5)
+    )
+    
+    # Clean up axes (Groww style minimalism)
+    fig.update_xaxes(showgrid=False, zeroline=False, showline=False)
+    fig.update_yaxes(showgrid=True, gridcolor='#f1f5f9', zeroline=False, showline=False, side='right')
+    
     return fig
 
 def build_gauge(up_prob, signal, title="Signal"):
