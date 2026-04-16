@@ -390,14 +390,29 @@ st.markdown("""
 /* Index mini card */
 .idx-card { background: #0f172a; border: 1px solid #1e293b; padding: 0.8rem; border-radius: 10px; margin: 0.3rem 0; }
 
-/* Live badge */
-.live-badge { display: inline-block; background: #10b981; color: white; padding: 2px 10px; border-radius: 20px; font-size: 0.7rem; font-weight: 600; animation: pulse 2s infinite; }
-@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
-
-/* Top Movers Table */
-.movers-table { width: 100%; border-collapse: collapse; }
-.movers-table th { text-align: left; padding: 8px 12px; color: #94a3b8; font-size: 0.8rem; border-bottom: 1px solid #334155; }
-.movers-table td { padding: 8px 12px; color: #e2e8f0; font-size: 0.9rem; border-bottom: 1px solid #1e293b; }
+/* Live Pulse Animations */
+.pulse-green {
+    background: #10b981; color: white; padding: 5px 15px; border-radius: 8px;
+    font-weight: 800; font-size: 1.2rem; display: inline-block;
+    animation: live-pulse-green 1.5s infinite;
+    box-shadow: 0 0 15px rgba(16,185,129,0.5);
+}
+.pulse-red {
+    background: #ef4444; color: white; padding: 5px 15px; border-radius: 8px;
+    font-weight: 800; font-size: 1.2rem; display: inline-block;
+    animation: live-pulse-red 1.5s infinite;
+    box-shadow: 0 0 15px rgba(239,68,68,0.5);
+}
+@keyframes live-pulse-green {
+    0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(16,185,129, 0.7); }
+    70% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(16,185,129, 0); }
+    100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(16,185,129, 0); }
+}
+@keyframes live-pulse-red {
+    0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239,68,68, 0.7); }
+    70% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(239,68,68, 0); }
+    100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239,68,68, 0); }
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -425,19 +440,26 @@ def fetch_stock(raw_symbol, days=200, interval='1d', period=None):
         if '.' not in mapped and '=' not in mapped and not mapped.startswith('^') and mapped not in us_stocks:
             mapped = mapped + '.NS'
 
-    try:
-        if not period: period = f'{days}d'
-        tk = yf.Ticker(mapped)
-        df = tk.history(period=period, interval=interval)
-        if df is None or df.empty:
-            df = yf.download(mapped, period=period, interval=interval, progress=False)
-        if df is None or df.empty:
-            return None, mapped
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        return df, mapped
-    except Exception:
-        return None, mapped
+    import time
+    if not period: period = f'{days}d'
+    
+    for attempt in range(3):
+        try:
+            tk = yf.Ticker(mapped)
+            df = tk.history(period=period, interval=interval)
+            
+            if df is None or df.empty:
+                df = yf.download(mapped, period=period, interval=interval, progress=False)
+                
+            if df is not None and not df.empty:
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(0)
+                return df, mapped
+        except Exception:
+            pass
+        time.sleep(1)
+        
+    return None, mapped
 
 @st.cache_data(ttl=3600)
 def fetch_fundamentals(mapped):
@@ -622,6 +644,35 @@ NEG_WORDS = ['fall','drop','crash','bearish','low','plunge','miss','sell','downg
 def score_headline(text):
     t = text.lower()
     return sum(1 for w in POS_WORDS if w in t) - sum(1 for w in NEG_WORDS if w in t)
+
+def analyze_live_candle(df):
+    """Analyzes the current forming candle for immediate momentum"""
+    if df is None or len(df) < 2: return {"bias": "Neutral", "color": "#94a3b8", "desc": "Stabilizing...", "pct": 0}
+    
+    live = df.iloc[-1]
+    prev = df.iloc[-2]
+    
+    lO, lH, lL, lC = float(live['Open']), float(live['High']), float(live['Low']), float(live['Close'])
+    pH, pL = float(prev['High']), float(prev['Low'])
+    
+    pct_from_open = (lC - lO) / lO * 100 if lO != 0 else 0
+    
+    if lC > lO:
+        bias = "UP 📈"
+        color = "#10b981"
+        if lC > pH: desc = "Strong Bullish Breakout"
+        else: desc = "Bullish Accumulation"
+    elif lC < lO:
+        bias = "DOWN 📉"
+        color = "#ef4444"
+        if lC < pL: desc = "Strong Bearish Breakdown"
+        else: desc = "Bearish Pressure"
+    else:
+        bias = "NEUTRAL ⚖️"
+        color = "#94a3b8"
+        desc = "Price Indecision"
+        
+    return {"bias": bias, "color": color, "desc": desc, "pct": pct_from_open}
 
 def analyze_news(headlines):
     if not headlines: return 0.0, []
@@ -829,12 +880,13 @@ def get_tv_symbol(symbol, mapped):
 def build_tradingview_chart(symbol, mapped):
     tv_sym = get_tv_symbol(symbol, mapped)
     return f"""
-    <div class="tradingview-widget-container" style="height:500px;width:100%">
+    <div class="tradingview-widget-container" style="height:800px;width:100%">
       <div id="tradingview_{symbol.lower()}"></div>
       <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
       <script type="text/javascript">
       new TradingView.widget({{
-        "autosize": true,
+        "width": "100%",
+        "height": 800,
         "symbol": "{tv_sym}",
         "interval": "D",
         "timezone": "Etc/UTC",
@@ -1141,15 +1193,22 @@ def page_explore():
 
 # ── PAGE: AI Prediction ──────────────────────────────────────────────────
 def page_prediction():
-    st.subheader("🔮 AI Stock Prediction Engine (2-Day Forecast)")
-    st.caption("This model analyzes historical trends, technical indicators, and news sentiment to predict if the price will go UP or DOWN **today** and **tomorrow**.")
-    c1, c2 = st.columns([3, 1])
+    st.subheader("🔮 AI Stock Prediction Engine (3-Day Forecast)")
+    st.caption("This model analyzes historical trends, technical indicators, and news sentiment to predict if the price will go UP or DOWN for the next **3 days**.")
+    c1, c2, c3 = st.columns([3, 1, 1])
     with c1:
         symbol = st.text_input("Enter Stock Symbol",
             placeholder="RELIANCE, TATAMOTORS, GOLD, SILVER, NIPPON, AAPL...")
     with c2:
         st.write(""); st.write("")
         run = st.button("🧠 Run AI", use_container_width=True)
+    with c3:
+        st.write(""); st.write("")
+        refresh = st.button("🔄 Refresh", use_container_width=True)
+    
+    if refresh:
+        st.cache_data.clear()
+        st.success("♻️ Cache Cleared. Fetching fresh data...")
 
     # Show available symbols
     with st.expander("📋 Available Symbols"):
@@ -1226,7 +1285,7 @@ def page_prediction():
             # Re-fetch for Intraday mode
             if "Intraday" in pred_mode:
                 with st.spinner("⚡ Fetching 15m intraday data..."):
-                    df_run, _ = fetch_stock(symbol, interval='15m', period='7d')
+                    df_run, _ = fetch_stock(symbol, interval='15m', period='5d') # Reduced from 7d to 5d for faster mobile loading
             else:
                 df_run = df
 
@@ -1255,40 +1314,7 @@ def page_prediction():
                     is_intra = "Intraday" in pred_mode
                     pred = st.session_state.engine.predict(symbol, prices, volumes, sent, tv_sent=tv_sentiment, intraday=is_intra)
                     if pred:
-                        sig_cls = {'BUY':'signal-buy','SELL':'signal-sell','HOLD':'signal-hold'}
-                        sig_emoji = {'BUY':'🟢 BUY','SELL':'🔴 SELL','HOLD':'🟡 HOLD'}
-                        
-                        # Dynamic Labels
-                        l1, l2, l3 = ("NEXT 15m", "NEXT 30m", "NEXT 60m") if "Intraday" in pred_mode else ("TODAY", "TOMORROW", "DAY AFTER")
-                        
-                        tc1, tc2, tc3 = st.columns(3)
-                        with tc1:
-                            st.markdown(f'<div class="{sig_cls[pred["today"]["signal"]]}">🎯 {l1} <br>'
-                                        f'<span style="font-size:0.9rem;font-weight:500;">AI Conf: {pred["today"]["confidence"]:.0%}</span></div>', unsafe_allow_html=True)
-                        with tc2:
-                            st.markdown(f'<div class="{sig_cls[pred["tomorrow"]["signal"]]}">🎯 {l2} <br>'
-                                        f'<span style="font-size:0.9rem;font-weight:500;">AI Conf: {pred["tomorrow"]["confidence"]:.0%}</span></div>', unsafe_allow_html=True)
-                        with tc3:
-                            st.markdown(f'<div class="{sig_cls[pred["day_after"]["signal"]]}">🎯 {l3} <br>'
-                                        f'<span style="font-size:0.9rem;font-weight:500;">AI Conf: {pred["day_after"]["confidence"]:.0%}</span></div>', unsafe_allow_html=True)
-
-                        st.write("")
-                        # NEW: Master Decision Card
-                        decision = pred["today"]["signal"]
-                        dec_color = "#10b981" if decision == "BUY" else "#ef4444" if decision == "SELL" else "#f59e0b"
-                        st.markdown(f"""
-                        <div style="background: {dec_color}22; border: 2px solid {dec_color}; padding: 25px; border-radius: 16px; margin: 20px 0; text-align: center; box-shadow: 0 10px 30px {dec_color}11;">
-                            <h1 style="margin:0; color:{dec_color}; font-size: 2.5rem; font-weight: 800;">{decision}</h1>
-                            <div style="font-size:1.1rem; color:#e2e8f0; font-weight:600; margin-top:8px;">AI ENGINE PRO DECISION</div>
-                            <div style="font-size:0.9rem; color:#94a3b8; margin-top:4px;">Machine Learning Confidence: {pred["today"]["confidence"]:.1%} • Timeframe: {l1}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                        st.write("") # Spacer
-                        gc1, gc2, gc3 = st.columns(3)
-                        with gc1: st.plotly_chart(build_gauge(pred['today']['up_prob'], pred['today']['signal'], "Prob"), use_container_width=True)
-                        with gc2: st.plotly_chart(build_gauge(pred['tomorrow']['up_prob'], pred['tomorrow']['signal'], "Prob"), use_container_width=True)
-                        with gc3: st.plotly_chart(build_gauge(pred['day_after']['up_prob'], pred['day_after']['signal'], "Prob"), use_container_width=True)
+                        pass # Moved to bottom
                     else:
                         st.warning("⚠️ Prediction failed for this stock.")
                 else:
@@ -1298,7 +1324,7 @@ def page_prediction():
                 st.markdown('<div class="section-head">📺 TradingView Live Chart & Deep Analysis</div>', unsafe_allow_html=True)
                 tv_tab1, tv_tab2, tv_tab3, tv_tab4, tv_tab5 = st.tabs(["📊 Advanced Chart", "🔍 Stock Profile", "📈 Technical Pulse", "📰 TradingView News", "🤖 AI vs TradingView"])
                 with tv_tab1:
-                    st.components.v1.html(build_tradingview_chart(symbol, mapped), height=500)
+                    st.components.v1.html(build_tradingview_chart(symbol, mapped), height=850)
                 with tv_tab2:
                     st.components.v1.html(build_tradingview_profile_widget(symbol, mapped), height=400)
                 with tv_tab3:
@@ -1329,48 +1355,168 @@ def page_prediction():
                 st.write("")
 
                 st.write("")
-                st_chart_col, st_advice_col = st.columns([2, 1])
-                with st_chart_col:
-                    st.markdown("### 📊 Internal Plotly Chart")
-                    st.plotly_chart(build_candle_chart(df_run.tail(60), symbol), use_container_width=True)
-                with st_advice_col:
-                    res = detect_candle_pattern(df_run.tail(3))
-                    st.markdown(f'<div style="background:#1e293b; color:#e2e8f0; padding:15px; border-radius:10px; border:1px solid #334155;">'
-                                f'<h4 style="margin-top:0">🔍 Pattern Analysis</h4>'
-                                f'<b>Recent Pattern:</b> {res["pattern"]} <br><br>'
-                                f'<b>Suggested Strategy:</b> <br><span style="font-size:0.9rem">{res["advice"]}</span>'
-                                f'<hr style="border:0.5px solid #334155">'
-                                f'<h4 style="margin-top:0">💡 AI Pro Discovery Insight</h4>'
-                                f'<span style="font-size:0.85rem; color:#94a3b8">'
-                                f'My browser agent scanned <b>TradingView.com</b> and found:'
-                                f'<ul>'
-                                f'<li><b>Community Ideas:</b> Mostly focused on target levels and reversal patterns.</li>'
-                                f'<li><b>Technical Rating:</b> Strong Sell momentum in major moving averages.</li>'
-                                f'<li><b>Market Sentiment:</b> {sent:+.2f} (referencing MoneyControl & TradingView News).</li>'
-                                f'</ul>'
-                                f'AI model priority: <b>{pred["today"]["signal"]}</b> ({pred["today"]["confidence"]:.1%} Conf).'
-                                f'</span>'
-                                f'</div>', unsafe_allow_html=True)
+                # --- NEW: 3-Day Forecast Signals ---
+                st.markdown('<div class="section-head">🎯 AI Signal Dashboard (3-Day Forecast)</div>', unsafe_allow_html=True)
+                tc1, tc2, tc3 = st.columns(3)
+                sig_cls = {'BUY': 'signal-buy', 'SELL': 'signal-sell', 'HOLD': 'signal-hold'}
+                sig_emoji = {'BUY': '🚀 BUY', 'SELL': '💥 SELL', 'HOLD': '⚖️ HOLD'}
                 
-                st.subheader("🤖 Model Accuracy")
-                mc1, mc2, mc3 = st.columns(3)
-                if "Intraday" in pred_mode:
-                    mc1.metric("15-Min Accuracy", f"{metrics['d1_acc']:.1%}")
-                    mc2.metric("30-Min Accuracy", f"{metrics['d2_acc']:.1%}")
-                    mc3.metric("60-Min Accuracy", f"{metrics['d4_acc']:.1%}")
-                else:
-                    mc1.metric("1-Day Accuracy", f"{metrics['d1_acc']:.1%}")
-                    mc2.metric("2-Day Accuracy", f"{metrics['d2_acc']:.1%}")
-                    mc3.metric("3-Day Accuracy", f"{metrics.get('d3_acc', 0):.1%}")
+                with tc1:
+                    st.markdown(f'<div class="{sig_cls[pred["today"]["signal"]]}">TODAY<br><span style="font-size:1.4rem;">{sig_emoji[pred["today"]["signal"]]}</span><br>'
+                                f'<span style="font-size:0.8rem;opacity:0.9;">Confidence: {pred["today"]["confidence"]:.1%}</span></div>', unsafe_allow_html=True)
+                with tc2:
+                    st.markdown(f'<div class="{sig_cls[pred["tomorrow"]["signal"]]}">TOMORROW<br><span style="font-size:1.4rem;">{sig_emoji[pred["tomorrow"]["signal"]]}</span><br>'
+                                f'<span style="font-size:0.8rem;opacity:0.9;">Confidence: {pred["tomorrow"]["confidence"]:.1%}</span></div>', unsafe_allow_html=True)
+                with tc3:
+                    st.markdown(f'<div class="{sig_cls[pred["day_after"]["signal"]]}">DAY 3<br><span style="font-size:1.4rem;">{sig_emoji[pred["day_after"]["signal"]]}</span><br>'
+                                f'<span style="font-size:0.8rem;opacity:0.9;">Confidence: {pred["day_after"]["confidence"]:.1%}</span></div>', unsafe_allow_html=True)
 
-                if scored_news:
-                    st.subheader("📰 News Sentiment")
-                    sl = "🟢 Bullish" if sent>0.2 else "🔴 Bearish" if sent<-0.2 else "🟡 Neutral"
-                    st.markdown(f"**{sl} ({sent:+.2f})**")
-                    for n in scored_news[:6]:
-                        scls = {'positive':'sentiment-pos','negative':'sentiment-neg'}.get(n['label'],'sentiment-neu')
-                        st.markdown(f'<div class="news-card"><span class="{scls}">[{n["label"].upper()}]</span> '
-                                    f'{n["title"]}</div>', unsafe_allow_html=True)
+                st.write("")
+                # --- VERTICAL LAYOUT: Analysis Below Chart ---
+                st.markdown("### 📊 Internal Plotly Chart")
+                st.plotly_chart(build_candle_chart(df_run.tail(60), symbol), use_container_width=True)
+                
+                # Analysis Section below the chart
+                st_live_col, st_conf_col = st.columns(2)
+                
+                # Confirmed Pattern (Closed)
+                res = detect_candle_pattern(df_run.tail(3))
+                # Live Pulse (Currently Forming)
+                live_res = analyze_live_candle(df_run)
+                p_cls = "pulse-green" if "UP" in live_res["bias"] else "pulse-red" if "DOWN" in live_res["bias"] else ""
+                
+                with st_live_col:
+                    st.markdown(f'''
+                    <div style="background:#1e293b; color:#e2e8f0; padding:15px; border-radius:10px; border:1px solid #334155; margin-bottom:15px; height:220px;">
+                        <h4 style="margin-top:0; color:#94a3b8; font-size:0.8rem; text-transform:uppercase;">Live Candle Monitor</h4>
+                        <div style="text-align:center; padding:10px 0;">
+                            <div class="{p_cls}">{live_res["bias"]}</div>
+                            <div style="font-size:1.5rem; font-weight:800; color:{live_res["color"]}; margin-top:8px;">{live_res["pct"]:+.2f}%</div>
+                            <div style="font-size:0.85rem; color:#94a3b8; margin-top:4px;">{live_res["desc"]}</div>
+                        </div>
+                    </div>''', unsafe_allow_html=True)
+
+                with st_conf_col:
+                    st.markdown(f'''
+                    <div style="background:#1e293b; color:#e2e8f0; padding:15px; border-radius:10px; border:1px solid #334155; height:220px;">
+                        <h4 style="margin-top:0; color:#94a3b8; font-size:0.8rem; text-transform:uppercase;">Confirmed Analysis</h4>
+                        <b>Recent Pattern:</b> {res["pattern"]} <br>
+                        <b>Suggested Strategy:</b> <br><span style="font-size:0.9rem">{res["advice"]}</span>
+                    </div>''', unsafe_allow_html=True)
+
+                st.markdown(f'''
+                <div style="background:#1e293b; color:#e2e8f0; padding:15px; border-radius:10px; border:1px solid #334155; width:100%;">
+                    <h4 style="margin-top:0; color:#94a3b8; font-size:0.8rem; text-transform:uppercase;">Fundamental & Technical Deep Insight</h4>
+                    <span style="font-size:0.85rem; color:#94a3b8">
+                    Our engine detected:
+                    <ul style="padding-left:15px; margin:5px 0;">
+                        <li>Technical Rating: <b>{tv_sentiment:+.2f}</b></li>
+                        <li>News Sentiment: <b>{sent:+.2f}</b></li>
+                        <li>AI Priority: <b style="color:#667eea">{pred["today"]["signal"]}</b></li>
+                        <li>AI Confidence: <b>{pred["today"]["confidence"]:.1%}</b></li>
+                    </ul>
+                    </span>
+                </div>
+                ''', unsafe_allow_html=True)
+                # -------------------------------
+                
+                # --- ADVANCED ANALYST DATA (Consolidated to resolve confusion) ---
+                with st.expander("🛠️ Advanced Analyst Data & Market Context", expanded=False):
+                    st.subheader("🤖 Model Accuracy")
+                    mc1, mc2, mc3 = st.columns(3)
+                    if "Intraday" in pred_mode:
+                        mc1.metric("15-Min Accuracy", f"{metrics['d1_acc']:.1%}")
+                        mc2.metric("30-Min Accuracy", f"{metrics['d2_acc']:.1%}")
+                        mc3.metric("60-Min Accuracy", f"{metrics['d4_acc']:.1%}")
+                    else:
+                        mc1.metric("1-Day Accuracy", f"{metrics['d1_acc']:.1%}")
+                        mc2.metric("2-Day Accuracy", f"{metrics['d2_acc']:.1%}")
+                        mc3.metric("3-Day Accuracy", f"{metrics.get('d3_acc', 0):.1%}")
+
+                    if scored_news:
+                        st.subheader("📰 News Sentiment Details")
+                        sl = "🟢 Bullish" if sent>0.2 else "🔴 Bearish" if sent<-0.2 else "🟡 Neutral"
+                        st.markdown(f"**Current Sentiment Bias: {sl} ({sent:+.2f})**")
+                        for n in scored_news[:6]:
+                            scls = {'positive':'sentiment-pos','negative':'sentiment-neg'}.get(n['label'],'sentiment-neu')
+                            st.markdown(f'<div class="news-card"><span class="{scls}">[{n["label"].upper()}]</span> '
+                                        f'{n["title"]}</div>', unsafe_allow_html=True)
+                
+                
+                # --- FINAL MASTER VERDICT ---
+                if pred:
+                    # --- UNIFIED INTELLIGENCE LOGIC ---
+                    res = detect_candle_pattern(df_run.tail(3))
+                    pat_l = res["pattern"].lower()
+                    
+                    ai_s = pred["today"]["signal"]
+                    tv_str = "BUY" if tv_sentiment > 0.1 else "SELL" if tv_sentiment < -0.1 else "NEUTRAL"
+                    pat_str = "BULLISH" if ('bullish' in pat_l or 'hammer' in pat_l) else "BEARISH" if ('bearish' in pat_l or 'star' in pat_l) else "NEUTRAL"
+                    news_str = "BULLISH" if sent > 0.2 else "BEARISH" if sent < -0.2 else "NEUTRAL"
+
+                    ai_pts = 4 if ai_s == 'BUY' else -4 if ai_s == 'SELL' else 0
+                    tv_pts = 2 if tv_str == "BUY" else -2 if tv_str == "SELL" else 0
+                    pat_pts = 1.5 if pat_str == "BULLISH" else -1.5 if pat_str == "BEARISH" else 0
+                    news_pts = 1.5 if news_str == "BULLISH" else -1.5 if news_str == "BEARISH" else 0
+                    
+                    score = ai_pts + tv_pts + pat_pts + news_pts
+                    
+                    # Calculate Agreement Score (How many point in same direction?)
+                    total_indicators = 4
+                    pointing_up = sum([1 for p in [ai_pts, tv_pts, pat_pts, news_pts] if p > 0])
+                    pointing_down = sum([1 for p in [ai_pts, tv_pts, pat_pts, news_pts] if p < 0])
+                    agreement_pct = (max(pointing_up, pointing_down) / total_indicators) * 100
+                    
+                    # Target Verdict Fix
+                    if score >= 3.5: fin_sig, fin_col, act_desc = "POWERFUL BUY 🚀", "#00b386", "All major systems agree. High probability trend detected."
+                    elif score >= 1.5: fin_sig, fin_col, act_desc = "BUY 📈", "#10b981", "Bullish bias dominates. Consider entry on dips."
+                    elif score <= -3.5: fin_sig, fin_col, act_desc = "POWERFUL SELL 💥", "#eb5b3c", "Unanimous bearish signals. Strong downward pressure."
+                    elif score <= -1.5: fin_sig, fin_col, act_desc = "SELL 📉", "#ef4444", "Bearish signals outweigh. Avoid buying."
+                    else: fin_sig, fin_col, act_desc = "WAIT / HOLD ⚖️", "#f59e0b", "Signals are conflicting. No clear trade advantage right now."
+
+                    # Track Drivers
+                    drivers = []
+                    if abs(ai_pts) >= 4: drivers.append(f"AI Math ({ai_s})")
+                    if abs(tv_pts) >= 2: drivers.append(f"TV Technicals ({tv_str})")
+                    if abs(pat_pts) >= 1.5: drivers.append(f"Chart Pattern ({pat_str})")
+                    if abs(news_pts) >= 1.5: drivers.append(f"News Sentiment ({news_str})")
+                    driver_text = " + ".join(drivers) if drivers else "Mixed Indicators"
+
+                    # Conflict Insight
+                    if agreement_pct <= 50:
+                        insight = "⚠️ <b>High Conflict</b>: Mathematical Trend vs Market Sentiment are fighting. Wait for a clear breakout."
+                    elif (ai_pts > 0 and news_pts < 0):
+                        insight = "💡 <b>AI vs News</b>: The numbers are bullish, but current news headlines suggest caution."
+                    elif (ai_pts < 0 and news_pts > 0):
+                        insight = "💡 <b>AI vs News</b>: Math is bearish, but news sentiment is attempting to push back."
+                    else:
+                        insight = "✅ <b>Trend Sync</b>: Signals are currently in harmony for this direction."
+
+                    # Fixed: Removed leading spaces to prevent Markdown code block interpretation
+                    consensus_html = (
+f'<div style="background: {fin_col}15; border: 2px solid {fin_col}; padding: 35px; border-radius: 20px; margin: 30px 0; text-align: center; border-left: 10px solid {fin_col};">'
+f'<div style="background:{fin_col}; color:white; padding:4px 15px; border-radius:30px; display:inline-block; font-size:0.75rem; font-weight:700; text-transform:uppercase; margin-bottom:10px;">Supreme Intelligence Verdict</div>'
+f'<h1 style="margin:10px 0; color:{fin_col}; font-size: 4rem; font-weight: 900; letter-spacing:-1px;">{fin_sig}</h1>'
+f'<div style="font-size:1.3rem; color:#e2e8f0; font-weight:600;">{act_desc}</div>'
+
+f'<div style="display:flex; justify-content:center; gap:20px; margin:25px 0;">'
+f'<div style="background:rgba(255,255,255,0.05); padding:15px; border-radius:15px; border:1px solid rgba(255,255,255,0.1); flex:1;">'
+f'<div style="font-size:0.75rem; color:#94a3b8; text-transform:uppercase;">Agreement Level</div>'
+f'<div style="font-size:1.4rem; color:#cbd5e1; font-weight:800;">{agreement_pct:.0%}%</div>'
+f'</div>'
+f'<div style="background:rgba(255,255,255,0.05); padding:15px; border-radius:15px; border:1px solid rgba(255,255,255,0.1); flex:2;">'
+f'<div style="font-size:0.75rem; color:#94a3b8; text-transform:uppercase;">Dominant Driver</div>'
+f'<div style="font-size:1rem; color:#cbd5e1; font-weight:700;">{driver_text}</div>'
+f'</div>'
+f'</div>'
+
+f'<div style="background:rgba(0,0,0,0.3); padding:15px; border-radius:12px; border:1px dashed rgba(255,255,255,0.2); text-align:left;">'
+f'<div style="font-size:0.75rem; color:#94a3b8; text-transform:uppercase; margin-bottom:5px;">System Insight</div>'
+f'<div style="color:#e2e8f0; font-size:0.95rem;">{insight}</div>'
+f'</div>'
+f'</div>'
+)
+                    st.markdown(consensus_html, unsafe_allow_html=True)
             else:
                 st.warning("⚠️ Not enough historical data for AI prediction (need 60+ days). Showing live price and chart only.")
                 st.plotly_chart(build_candle_chart(df.tail(60), symbol), use_container_width=True)
