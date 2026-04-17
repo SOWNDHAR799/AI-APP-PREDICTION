@@ -1296,6 +1296,7 @@ def page_prediction():
         symbol = symbol.strip().upper()
         with st.spinner(f"📡 Fetching data for {symbol}..."):
             df, mapped = fetch_stock(symbol, 250)
+            if df is not None: df = calculate_ut_bot(df)
         
         # Try getting exact real-time price from Google Finance first
         live_price = get_realtime_price(symbol, mapped)
@@ -1324,7 +1325,7 @@ def page_prediction():
             pct = (chg / prev * 100) if prev != 0 else 0
             cls = 'change-up' if chg >= 0 else 'change-down'
             
-            ut_s = "BUY 🚀" if cur > df_run.iloc[-1]['UT_Trail'] else "SELL 💥"
+            ut_s = "BUY 🚀" if cur > df.iloc[-1]['UT_Trail'] else "SELL 💥"
             ut_color = "#10b981" if "BUY" in ut_s else "#ef4444"
             
             st.markdown(f"""<div class="stock-card" style="padding:1.5rem; border-right: 10px solid {ut_color}">
