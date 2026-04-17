@@ -562,6 +562,55 @@ def get_price_info(symbol, days=5):
             'change': chg, 'pct': pct, 'currency': curr_sym, 'volume': last_vol}
 
 
+def calculate_ut_bot(df, sensitivity=2, period=10):
+    """
+    Implements the UT Bot Alerts logic (ATR-based trailing stop).
+    Returns the dataframe with 'UT_Trail', 'UT_Buy', and 'UT_Sell' columns.
+    """
+    if df is None or len(df) < period + 5:
+        return df
+    
+    # Calculate ATR
+    temp_df = df.copy()
+    high = temp_df['High']
+    low = temp_df['Low']
+    close = temp_df['Close']
+    
+    # TR calculation
+    tr1 = high - low
+    tr2 = (high - close.shift()).abs()
+    tr3 = (low - close.shift()).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr = tr.rolling(period).mean()
+    
+    n_loss = sensitivity * atr
+    
+    trail = np.zeros(len(temp_df))
+    src = close.values
+    
+    # Initialize first trail value to avoid zeros
+    trail[0] = src[0]
+    
+    for i in range(1, len(temp_df)):
+        prev_trail = trail[i-1]
+        if src[i] > prev_trail and src[i-1] > prev_trail:
+            trail[i] = max(prev_trail, src[i] - n_loss.iloc[i])
+        elif src[i] < prev_trail and src[i-1] < prev_trail:
+            trail[i] = min(prev_trail, src[i] + n_loss.iloc[i])
+        elif src[i] > prev_trail:
+            trail[i] = src[i] - n_loss.iloc[i]
+        else:
+            trail[i] = src[i] + n_loss.iloc[i]
+            
+    df = df.copy()
+    df['UT_Trail'] = trail
+    
+    # Generate signals (Confirmed on bar close)
+    df['UT_Buy'] = (df['Close'].shift(1) < df['UT_Trail'].shift(1)) & (df['Close'] > df['UT_Trail'])
+    df['UT_Sell'] = (df['Close'].shift(1) > df['UT_Trail'].shift(1)) & (df['Close'] < df['UT_Trail'])
+    
+    return df
+
 def detect_candle_pattern(df):
     """Detects confirmed candlestick patterns from the last CLOSED candle to avoid live repainting"""
     if df is None or len(df) < 3: return {"pattern": "Not enough data", "advice": "Wait for more data."}
@@ -832,6 +881,31 @@ def build_candle_chart(df, symbol):
     # Simple Moving Average (subtle)
     ma20 = df['Close'].rolling(20).mean()
     fig.add_trace(go.Scatter(x=df.index, y=ma20, line=dict(color='#667eea', width=1, dash='dot'), name='MA20', opacity=0.6), row=1, col=1)
+    
+    # --- UT Bot Alerts Visualization ---
+    if 'UT_Trail' in df.columns:
+        # Trailing Stop Line
+        fig.add_trace(go.Scatter(x=df.index, y=df['UT_Trail'], 
+                                 line=dict(color='#94a3b8', width=1, dash='dot'), 
+                                 name='UT Trail', opacity=0.4), row=1, col=1)
+        
+        # Buy Signals (Triangles below low)
+        buys = df[df['UT_Buy'] == True]
+        if not buys.empty:
+            fig.add_trace(go.Scatter(x=buys.index, y=buys['Low'] * 0.995, 
+                                     mode='markers',
+                                     marker=dict(symbol='triangle-up', size=12, color='#00b386', 
+                                                 line=dict(width=1, color='white')),
+                                     name='UT Buy'), row=1, col=1)
+                                     
+        # Sell Signals (Triangles above high)
+        sells = df[df['UT_Sell'] == True]
+        if not sells.empty:
+            fig.add_trace(go.Scatter(x=sells.index, y=sells['High'] * 1.005, 
+                                     mode='markers',
+                                     marker=dict(symbol='triangle-down', size=12, color='#eb5b3c', 
+                                                 line=dict(width=1, color='white')),
+                                     name='UT Sell'), row=1, col=1)
     
     # Volume
     colors = [UP_COLOR if c >= o else DOWN_COLOR for c, o in zip(df['Close'], df['Open'])]
@@ -1109,18 +1183,21 @@ def page_explore():
     st.markdown(row_html, unsafe_allow_html=True)
 
     # NEW: Market Pulse
-    st.markdown('<div class="section-head">⚡ Market Pulse (Candlestick Signals)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-head">⚡ Market Pulse (Candlestick & UT Bot Alert)</div>', unsafe_allow_html=True)
     pulse_syms = ['RELIANCE', 'TATAMOTORS', 'WIPRO', 'GOLD']
     pulse_cols = st.columns(len(pulse_syms))
     for i, psym in enumerate(pulse_syms):
-        pdf, _ = fetch_stock(psym, 10)
+        pdf, _ = fetch_stock(psym, 30)
         if pdf is not None:
             pat = detect_candle_pattern(pdf)
-            color = "#10b981" if "Bullish" in pat['pattern'] or "Hammer" in pat['pattern'] else "#ef4444" if "Bearish" in pat['pattern'] or "Star" in pat['pattern'] else "#94a3b8"
+            pdf = calculate_ut_bot(pdf)
+            ut_s = "BUY 🚀" if pdf.iloc[-1]['Close'] > pdf.iloc[-1]['UT_Trail'] else "SELL 💥"
+            color = "#10b981" if "BUY" in ut_s else "#ef4444"
             with pulse_cols[i]:
                 st.markdown(f"""<div class="stock-card" style="border-left: 4px solid {color}">
                     <div class="name">{psym}</div>
                     <div style="font-size:0.8rem; color:{color}; font-weight:700">{pat['pattern']}</div>
+                    <div style="font-size:0.75rem; color:{color}; opacity:0.8">UT Bot: {ut_s}</div>
                 </div>""", unsafe_allow_html=True)
 
     # Most Traded (top 4 cards)
@@ -1247,10 +1324,21 @@ def page_prediction():
             pct = (chg / prev * 100) if prev != 0 else 0
             cls = 'change-up' if chg >= 0 else 'change-down'
             
-            st.markdown(f"""<div class="stock-card" style="padding:1.5rem">
-                <div class="name" style="font-size:1rem">📊 {symbol}</div>
-                <div class="price" style="font-size:2rem">{curr}{cur:,.2f}</div>
-                <div class="{cls}" style="font-size:1rem">{'▲' if chg>=0 else '▼'} {chg:+,.2f} ({pct:+.2f}%)</div>
+            ut_s = "BUY 🚀" if cur > df_run.iloc[-1]['UT_Trail'] else "SELL 💥"
+            ut_color = "#10b981" if "BUY" in ut_s else "#ef4444"
+            
+            st.markdown(f"""<div class="stock-card" style="padding:1.5rem; border-right: 10px solid {ut_color}">
+                <div style="display:flex; justify-content:space-between; align-items:center">
+                    <div>
+                        <div class="name" style="font-size:1rem">📊 {symbol}</div>
+                        <div class="price" style="font-size:2rem">{curr}{cur:,.2f}</div>
+                        <div class="{cls}" style="font-size:1rem">{'▲' if chg>=0 else '▼'} {chg:+,.2f} ({pct:+.2f}%)</div>
+                    </div>
+                    <div style="text-align:right">
+                        <div style="font-size:0.7rem; color:#94a3b8; text-transform:uppercase">UT Bot Indicator</div>
+                        <div style="font-size:1.5rem; color:{ut_color}; font-weight:900">{ut_s}</div>
+                    </div>
+                </div>
             </div>""", unsafe_allow_html=True)
             
             # NEW: Screener.in Deep Fundamentals Button
@@ -1291,6 +1379,9 @@ def page_prediction():
 
             # AI Prediction Logic
             if df_run is not None and len(df_run) > 30:
+                # --- UT Bot Alerts Integration ---
+                df_run = calculate_ut_bot(df_run)
+                
                 close = df_run['Close']; vol = df_run['Volume']
                 if isinstance(close, pd.DataFrame): close = close.iloc[:,0]
                 if isinstance(vol, pd.DataFrame): vol = vol.iloc[:,0]
@@ -1412,6 +1503,7 @@ def page_prediction():
                     <ul style="padding-left:15px; margin:5px 0;">
                         <li>Technical Rating: <b>{tv_sentiment:+.2f}</b></li>
                         <li>News Sentiment: <b>{sent:+.2f}</b></li>
+                        <li>UT Bot Signal: <b>{"BUY 🚀" if df_run.iloc[-1]["Close"] > df_run.iloc[-1]["UT_Trail"] else "SELL 💥"}</b></li>
                         <li>AI Priority: <b style="color:#667eea">{pred["today"]["signal"]}</b></li>
                         <li>AI Confidence: <b>{pred["today"]["confidence"]:.1%}</b></li>
                     </ul>
@@ -1453,31 +1545,36 @@ def page_prediction():
                     tv_str = "BUY" if tv_sentiment > 0.1 else "SELL" if tv_sentiment < -0.1 else "NEUTRAL"
                     pat_str = "BULLISH" if ('bullish' in pat_l or 'hammer' in pat_l) else "BEARISH" if ('bearish' in pat_l or 'star' in pat_l) else "NEUTRAL"
                     news_str = "BULLISH" if sent > 0.2 else "BEARISH" if sent < -0.2 else "NEUTRAL"
+                    
+                    ut_last = df_run.iloc[-1]
+                    ut_s = "BUY" if ut_last['Close'] > ut_last['UT_Trail'] else "SELL"
 
                     ai_pts = 4 if ai_s == 'BUY' else -4 if ai_s == 'SELL' else 0
                     tv_pts = 2 if tv_str == "BUY" else -2 if tv_str == "SELL" else 0
+                    ut_pts = 2 if ut_s == "BUY" else -2
                     pat_pts = 1.5 if pat_str == "BULLISH" else -1.5 if pat_str == "BEARISH" else 0
                     news_pts = 1.5 if news_str == "BULLISH" else -1.5 if news_str == "BEARISH" else 0
                     
-                    score = ai_pts + tv_pts + pat_pts + news_pts
+                    score = ai_pts + tv_pts + ut_pts + pat_pts + news_pts
                     
                     # Calculate Agreement Score (How many point in same direction?)
-                    total_indicators = 4
-                    pointing_up = sum([1 for p in [ai_pts, tv_pts, pat_pts, news_pts] if p > 0])
-                    pointing_down = sum([1 for p in [ai_pts, tv_pts, pat_pts, news_pts] if p < 0])
+                    total_indicators = 5
+                    pointing_up = sum([1 for p in [ai_pts, tv_pts, ut_pts, pat_pts, news_pts] if p > 0])
+                    pointing_down = sum([1 for p in [ai_pts, tv_pts, ut_pts, pat_pts, news_pts] if p < 0])
                     agreement_pct = (max(pointing_up, pointing_down) / total_indicators) * 100
                     
                     # Target Verdict Fix
-                    if score >= 3.5: fin_sig, fin_col, act_desc = "POWERFUL BUY 🚀", "#00b386", "All major systems agree. High probability trend detected."
-                    elif score >= 1.5: fin_sig, fin_col, act_desc = "BUY 📈", "#10b981", "Bullish bias dominates. Consider entry on dips."
-                    elif score <= -3.5: fin_sig, fin_col, act_desc = "POWERFUL SELL 💥", "#eb5b3c", "Unanimous bearish signals. Strong downward pressure."
-                    elif score <= -1.5: fin_sig, fin_col, act_desc = "SELL 📉", "#ef4444", "Bearish signals outweigh. Avoid buying."
+                    if score >= 4.5: fin_sig, fin_col, act_desc = "POWERFUL BUY 🚀", "#00b386", "All major systems agree. High probability trend detected."
+                    elif score >= 2.0: fin_sig, fin_col, act_desc = "BUY 📈", "#10b981", "Bullish bias dominates. Consider entry on dips."
+                    elif score <= -4.5: fin_sig, fin_col, act_desc = "POWERFUL SELL 💥", "#eb5b3c", "Unanimous bearish signals. Strong downward pressure."
+                    elif score <= -2.0: fin_sig, fin_col, act_desc = "SELL 📉", "#ef4444", "Bearish signals outweigh. Avoid buying."
                     else: fin_sig, fin_col, act_desc = "WAIT / HOLD ⚖️", "#f59e0b", "Signals are conflicting. No clear trade advantage right now."
 
                     # Track Drivers
                     drivers = []
                     if abs(ai_pts) >= 4: drivers.append(f"AI Math ({ai_s})")
                     if abs(tv_pts) >= 2: drivers.append(f"TV Technicals ({tv_str})")
+                    if abs(ut_pts) >= 2: drivers.append(f"UT Bot ({ut_s})")
                     if abs(pat_pts) >= 1.5: drivers.append(f"Chart Pattern ({pat_str})")
                     if abs(news_pts) >= 1.5: drivers.append(f"News Sentiment ({news_str})")
                     driver_text = " + ".join(drivers) if drivers else "Mixed Indicators"
@@ -1647,7 +1744,7 @@ def page_screener():
     st.caption("Scan the market based on technical indicators and volume spikes to find high-probability trades.")
     
     with st.expander("🛠️ Screener Filters (Technical & Fundamentals)", expanded=True):
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3, c4, c5 = st.columns(5)
         with c1:
             rsi_filter = st.selectbox("RSI Signal", ["None", "Oversold (<35)", "Bullish (>60)", "Overbought (>70)"])
         with c2:
@@ -1656,6 +1753,8 @@ def page_screener():
             pe_filter = st.selectbox("P/E Ratio", ["Any", "Under 15", "Under 25", "Under 40"])
         with c4:
             pat_filter = st.selectbox("Candlestick Pattern", ["Any", "Bullish Hammer", "Bullish Engulfing", "Bearish Engulfing", "Doji"])
+        with c5:
+            ut_filter = st.selectbox("UT Bot Alert", ["Any", "BUY Signal", "SELL Signal"])
             
     if st.button("🔍 Start Market Scan", use_container_width=True):
         # We screen the Nifty 50 and Top Growth stocks for speed
@@ -1689,8 +1788,11 @@ def page_screener():
                 curr_vol = vols[-1]
                 vol_ratio = float(curr_vol / avg_vol) if avg_vol > 0 else 0.0
                 
-                # Detect Pattern
+                # Detect Pattern & UT Bot
                 pat_res = detect_candle_pattern(df)
+                df = calculate_ut_bot(df)
+                ut_last = df.iloc[-1]
+                ut_s = "BUY" if ut_last['Close'] > ut_last['UT_Trail'] else "SELL"
                 
                 # Apply Filters
                 pass_rsi = True
@@ -1706,6 +1808,10 @@ def page_screener():
                 if pat_filter != "Any":
                     pass_pat = pat_filter.lower() in pat_res['pattern'].lower()
 
+                pass_ut = True
+                if ut_filter == "BUY Signal": pass_ut = ut_s == "BUY"
+                elif ut_filter == "SELL Signal": pass_ut = ut_s == "SELL"
+
                 # Apply PE Filter
                 pass_pe = True
                 f_stats = None # Initialize to prevent NameError
@@ -1717,7 +1823,7 @@ def page_screener():
                         elif pe_filter == "Under 25": pass_pe = curr_pe < 25
                         elif pe_filter == "Under 40": pass_pe = curr_pe < 40
                 
-                if pass_rsi and pass_vol and pass_pat and pass_pe:
+                if pass_rsi and pass_vol and pass_pat and pass_pe and pass_ut:
                     info = get_price_info(sym, 2)
                     if info:
                         # NEW: Market News Collector for the matched stock
@@ -1728,6 +1834,7 @@ def page_screener():
                             'Stock': sym,
                             'Price': f"{info['currency']}{info['price']:,.2f}",
                             'Change%': f"{info['pct']:+.2f}%",
+                            'UT Bot': f"{ut_s} 🤖",
                             'RSI': f"{rsi:.1f}",
                             'P/E': f"{f_stats['pe']:.1f}" if (pe_filter != "Any" and f_stats) else 
                                    f"{fetch_fundamentals(mapped)['pe']:.1f}" if fetch_fundamentals(mapped) else "N/A",
