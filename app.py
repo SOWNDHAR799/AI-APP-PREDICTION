@@ -392,25 +392,37 @@ st.markdown("""
 
 /* Live Pulse Animations */
 .pulse-green {
-    background: #10b981; color: white; padding: 5px 15px; border-radius: 8px;
-    font-weight: 800; font-size: 1.2rem; display: inline-block;
-    animation: live-pulse-green 1.5s infinite;
-    box-shadow: 0 0 15px rgba(16,185,129,0.5);
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: white; padding: 6px 18px; border-radius: 20px;
+    font-weight: 800; font-size: 1rem; display: inline-block;
+    animation: live-pulse-green 1.8s infinite;
+    box-shadow: 0 0 20px rgba(16,185,129,0.4);
+    border: 1px solid rgba(255,255,255,0.2);
 }
 .pulse-red {
-    background: #ef4444; color: white; padding: 5px 15px; border-radius: 8px;
-    font-weight: 800; font-size: 1.2rem; display: inline-block;
-    animation: live-pulse-red 1.5s infinite;
-    box-shadow: 0 0 15px rgba(239,68,68,0.5);
+    background: linear-gradient(135deg, #ef4444, #dc2626);
+    color: white; padding: 6px 18px; border-radius: 20px;
+    font-weight: 800; font-size: 1rem; display: inline-block;
+    animation: live-pulse-red 1.8s infinite;
+    box-shadow: 0 0 20px rgba(239,68,68,0.4);
+    border: 1px solid rgba(255,255,255,0.2);
+}
+.live-badge {
+    color: #ef4444; font-weight: 800; 
+    animation: live-flicker 1.5s infinite;
+}
+@keyframes live-flicker {
+    0%, 100% { opacity: 1; text-shadow: 0 0 8px rgba(239,68,68,0.6); }
+    50% { opacity: 0.4; text-shadow: none; }
 }
 @keyframes live-pulse-green {
     0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(16,185,129, 0.7); }
-    70% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(16,185,129, 0); }
+    70% { transform: scale(1.05); box-shadow: 0 0 0 12px rgba(16,185,129, 0); }
     100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(16,185,129, 0); }
 }
 @keyframes live-pulse-red {
     0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239,68,68, 0.7); }
-    70% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(239,68,68, 0); }
+    70% { transform: scale(1.05); box-shadow: 0 0 0 12px rgba(239,68,68, 0); }
     100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239,68,68, 0); }
 }
 </style>
@@ -1193,9 +1205,13 @@ def page_explore():
             pdf = calculate_ut_bot(pdf)
             ut_s = "BUY 🚀" if pdf.iloc[-1]['Close'] > pdf.iloc[-1]['UT_Trail'] else "SELL 💥"
             color = "#10b981" if "BUY" in ut_s else "#ef4444"
+            pulse_class = "pulse-green" if "BUY" in ut_s else "pulse-red"
             with pulse_cols[i]:
-                st.markdown(f"""<div class="stock-card" style="border-left: 4px solid {color}">
-                    <div class="name">{psym}</div>
+                st.markdown(f"""<div class="stock-card" style="border-left: 4px solid {color}; overflow: hidden;">
+                    <div style="display:flex; justify-content:space-between;">
+                        <div class="name">{psym}</div>
+                        <div class="{pulse_class}" style="font-size: 0.6rem; padding: 2px 8px;">LIVE</div>
+                    </div>
                     <div style="font-size:0.8rem; color:{color}; font-weight:700">{pat['pattern']}</div>
                     <div style="font-size:0.75rem; color:{color}; opacity:0.8">UT Bot: {ut_s}</div>
                 </div>""", unsafe_allow_html=True)
