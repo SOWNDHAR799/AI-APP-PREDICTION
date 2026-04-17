@@ -327,8 +327,24 @@ WATCHLIST_DEFAULT = ['WIPRO', 'RELIANCE', 'TATASTEEL', 'NIPPON', 'BOSCHLTD', 'VE
 # ── Premium CSS (Groww-inspired) ──────────────────────────────────────────
 st.markdown("""
 <style>
+/* Mobile-Specific Overrides */
+@media (max-width: 768px) {
+    .main-title { font-size: 1.5rem !important; }
+    .ticker-bar { gap: 12px; font-size: 0.75rem; }
+    .stock-card { padding: 0.8rem; }
+    .stock-card .price { font-size: 1rem; }
+    .signal-buy, .signal-sell, .signal-hold { padding: 1rem; font-size: 1rem; }
+    
+    /* Optimize Verdict Cards for Mobile */
+    .verdict-h1 { font-size: 2.2rem !important; margin: 10px 0 !important; }
+    .verdict-desc { font-size: 0.95rem !important; }
+    .verdict-container { padding: 20px !important; border-radius: 15px !important; }
+    
+    /* Ensure forecast boxes stack on mobile */
+    .forecast-container > div { display: block !important; width: 100% !important; margin-bottom: 10px; }
+}
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-* { font-family: 'Inter', sans-serif; }
+* { font-family: 'Inter', sans-serif; box-sizing: border-box; }
 
 /* Ticker Bar */
 .ticker-bar {
@@ -791,21 +807,48 @@ class AIEngine:
         if al == 0: return 100
         return 100 - (100 / (1 + ag / al))
 
+    @staticmethod
+    def _ema(prices, period=9):
+        if len(prices) < period: return np.mean(prices)
+        alpha = 2 / (period + 1)
+        ema = prices[0]
+        for p in prices[1:]:
+            ema = (p * alpha) + (ema * (1 - alpha))
+        return ema
+
     def _features(self, prices, volumes, idx, lb=20):
         w = prices[max(0, idx-lb):idx]
         vw = volumes[max(0, idx-lb):idx]
-        if len(w) < 5: return None
+        if len(w) < 10: return None
+        
+        # 1. Basic Moving Averages
         ma5 = np.mean(w[-5:]); ma10 = np.mean(w[-10:]) if len(w)>=10 else np.mean(w); ma20 = np.mean(w)
-        std5 = np.std(w[-5:]); std20 = np.std(w)
+        
+        # 2. EMAs for Crossovers
+        ema9 = self._ema(w, 9); ema21 = self._ema(w, 21)
+        ema_cross = 1 if ema9 > ema21 else -1
+        
+        # 3. Volatility (Bollinger & ATR approx)
+        std20 = np.std(w)
+        bbu = ma20 + 2*std20; bbl = ma20 - 2*std20
+        bbp = (w[-1]-bbl)/(bbu-bbl) if bbu!=bbl else 0.5
+        bbw = (bbu-bbl)/ma20 if ma20!=0 else 0 # Volatility Expansion
+        
+        # 4. Momentum & Trend
         mom = (w[-1]-w[0])/w[0] if w[0]!=0 else 0
         rsi = self._rsi(w)
         macd = ma5 - ma20
+        
+        # 5. Stochastic (Fast)
+        low_lb = np.min(w); high_lb = np.max(w)
+        stoch = (w[-1]-low_lb)/(high_lb-low_lb) if high_lb!=low_lb else 0.5
+        
+        # 6. Volume Pulse
         va = np.mean(vw) if len(vw)>0 else 0
         vc = (vw[-1]-vw[0])/vw[0] if len(vw)>0 and vw[0]!=0 else 0
-        bbu = ma20+2*std20; bbl = ma20-2*std20
-        bbp = (w[-1]-bbl)/(bbu-bbl) if bbu!=bbl else 0.5
         pmr = w[-1]/ma20 if ma20!=0 else 1
-        return [ma5,ma10,ma20,std5,std20,mom,rsi,macd,va,vc,bbp,pmr]
+        
+        return np.nan_to_num([ma5, ma10, ma20, ema9, ema21, ema_cross, std20, mom, rsi, macd, va, vc, bbp, bbw, stoch, pmr], nan=0.0, posinf=0.0, neginf=0.0).tolist()
 
     def train(self, symbol, prices, volumes, news_sent=0.0):
         prices = np.array(prices, dtype=float); volumes = np.array(volumes, dtype=float)
@@ -819,16 +862,23 @@ class AIEngine:
             y3.append(1 if prices[i+3]>prices[i] else 0) # 3 steps
             y4.append(1 if prices[i+4]>prices[i] else 0) # 4 steps
             
-        if len(X) < 30: return None
+        if len(X) < 40: return None # More data needed for better stability
         X = np.array(X)
         sc = StandardScaler(); Xs = sc.fit_transform(X)
         
         self.models[symbol] = {'d1': {}, 'd2': {}, 'd3': {}, 'd4': {}}
         for day, labels in zip(['d1','d2','d3','d4'], [y1, y2, y3, y4]):
             y = np.array(labels)
-            Xtr,Xte,ytr,yte = train_test_split(Xs, y, test_size=0.2, random_state=42)
-            rf = RandomForestClassifier(n_estimators=100, max_depth=6, random_state=42)
-            gb = GradientBoostingClassifier(n_estimators=80, max_depth=4, random_state=42)
+            
+            # CHRONOLOGICAL SPLIT (Important for Time Series Accuracy)
+            split = int(len(Xs) * 0.8)
+            Xtr, Xte = Xs[:split], Xs[split:]
+            ytr, yte = y[:split], y[split:]
+            
+            # Fine-tuned for High Precision
+            rf = RandomForestClassifier(n_estimators=150, max_depth=5, min_samples_leaf=3, random_state=42)
+            gb = GradientBoostingClassifier(n_estimators=120, max_depth=3, learning_rate=0.05, random_state=42)
+            
             rf.fit(Xtr,ytr); gb.fit(Xtr,ytr)
             self.models[symbol][day] = {'rf': rf, 'gb': gb, 'acc': (rf.score(Xte,yte) + gb.score(Xte,yte))/2}
             
@@ -860,16 +910,29 @@ class AIEngine:
         for label, step_key, feat in zip(labels, steps, feats):
             m_set = self.models[symbol][step_key]
             probs = [m_set[m].predict_proba(feat)[0][1] for m in ['rf', 'gb']]
-            # Incorporate weighted sentiment from News (8%) and TradingView (12%)
-            up_prob = np.clip(np.mean(probs) + 0.08*news_sent + 0.12*tv_sent, 0, 1)
+            
+            # --- DYNAMIC SENSITIVITY LOGIC ---
+            if intraday:
+                # Intraday: More sensitive to News (15%) and Technicals (20%)
+                # High-speed momentum detection
+                up_prob = np.clip(np.mean(probs) + 0.15*news_sent + 0.20*tv_sent, 0, 1)
+                # Lower threshold for Intraday to catch small moves (like the 4 rupee rise)
+                CONFIDENCE_THRESHOLD = 0.58 
+            else:
+                # Daily: Conservative & Safe
+                up_prob = np.clip(np.mean(probs) + 0.10*news_sent + 0.15*tv_sent, 0, 1)
+                # Higher threshold for Swing trading safety
+                CONFIDENCE_THRESHOLD = 0.65
+                
             dn_prob = 1 - up_prob
-            sig = 'BUY' if up_prob > 0.55 else 'SELL' if dn_prob > 0.55 else 'HOLD'
+            sig = 'BUY' if up_prob > CONFIDENCE_THRESHOLD else 'SELL' if dn_prob > CONFIDENCE_THRESHOLD else 'HOLD'
+            
             results[label] = {
                 'signal': sig, 
                 'confidence': round(max(up_prob, dn_prob), 4), 
                 'up_prob': round(up_prob, 4),
-                'news_bias': round(0.08*news_sent, 4),
-                'tv_bias': round(0.12*tv_sent, 4)
+                'news_bias': round(0.15*news_sent if intraday else 0.10*news_sent, 4),
+                'tv_bias': round(0.20*tv_sent if intraday else 0.15*tv_sent, 4)
             }
         return results
 
@@ -1288,359 +1351,175 @@ def page_explore():
 def page_prediction():
     st.subheader("🔮 AI Stock Prediction Engine (3-Day Forecast)")
     st.caption("This model analyzes historical trends, technical indicators, and news sentiment to predict if the price will go UP or DOWN for the next **3 days**.")
-    c1, c2, c3 = st.columns([3, 1, 1])
-    with c1:
-        symbol = st.text_input("Enter Stock Symbol",
-            placeholder="RELIANCE, TATAMOTORS, GOLD, SILVER, NIPPON, AAPL...")
-    with c2:
-        st.write(""); st.write("")
-        run = st.button("🧠 Run AI", use_container_width=True)
-    with c3:
-        st.write(""); st.write("")
-        refresh = st.button("🔄 Refresh", use_container_width=True)
     
+    with st.form("prediction_config_form"):
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            symbol = st.text_input("Enter Stock Symbol", placeholder="RELIANCE, TATAMOTORS, GOLD, SILVER, NIPPON, AAPL...")
+        with c2:
+            pred_mode = st.selectbox("Mode", ["📅 Daily (Swing)", "📈 Intraday (1H)"])
+        
+        run = st.form_submit_button("🧠 Run AI Analysis", use_container_width=True)
+    
+    refresh = st.button("🔄 Clear Cache & Reset", use_container_width=True)
     if refresh:
         st.cache_data.clear()
+        for k in ['pred_df','pred_mapped','pred_metrics','pred_results','last_sym','last_mode']:
+            if k in st.session_state: del st.session_state[k]
         st.success("♻️ Cache Cleared. Fetching fresh data...")
 
-    # Show available symbols
     with st.expander("📋 Available Symbols"):
-        sym_list = sorted(STOCK_MAP.keys())
-        st.write(", ".join(sym_list))
+        st.write(", ".join(sorted(STOCK_MAP.keys())))
 
     if run and symbol.strip():
         symbol = symbol.strip().upper()
-        with st.spinner(f"📡 Fetching data for {symbol}..."):
+        # Handle Mode Switch
+        st.session_state.last_mode = pred_mode
+        st.session_state.last_sym = symbol
+        
+        with st.spinner(f"📡 Processing {symbol}..."):
             df, mapped = fetch_stock(symbol, 250)
             if df is not None: df = calculate_ut_bot(df)
-        
-        # Try getting exact real-time price from Google Finance first
-        live_price = get_realtime_price(symbol, mapped)
-        
-        if (df is None or df.empty) and live_price is None:
-            st.error(f"❌ No data for {symbol}. Check the symbol name.")
-            return
+            live_price = get_realtime_price(symbol, mapped)
+            
+            if (df is None or df.empty) and live_price is None:
+                st.error(f"❌ No data for {symbol}"); return
 
-        is_commodity = mapped in COMMODITY_USD
+            st.session_state.pred_df = df
+            st.session_state.pred_mapped = mapped
+            
+            is_intra = "Intraday" in pred_mode
+            df_run = df
+            if is_intra:
+                with st.spinner("⚡ Fetching 14-day intraday memory..."):
+                    df_run, _ = fetch_stock(symbol, interval='15m', period='14d')
+                    if df_run is not None: df_run = calculate_ut_bot(df_run)
+
+            if df_run is not None and len(df_run) > 30:
+                df_run['EMA9'] = df_run['Close'].ewm(span=9, adjust=False).mean()
+                df_run['EMA21'] = df_run['Close'].ewm(span=21, adjust=False).mean()
+                prices = df_run['Close'].dropna().astype(float).tolist()
+                volumes = df_run['Volume'].dropna().astype(float).tolist()
+                
+                with st.spinner("📰 Analyzing news..."): 
+                    news = fetch_market_news(f"{symbol} share stock market news")
+                    if not news: news = fetch_market_news("Indian Stock Market Latest News")
+                    sent, _ = analyze_news(news)
+
+                with st.spinner("🧠 Training Engine..."):
+                    metrics = st.session_state.engine.train(symbol, prices, volumes, sent)
+                    st.session_state.pred_metrics = metrics
+                
+                with st.spinner("📡 TradingView Bias..."):
+                    tv_sentiment = fetch_tv_sentiment(symbol, mapped)
+                
+                if metrics:
+                    st.session_state.pred_results = st.session_state.engine.predict(symbol, prices, volumes, sent, tv_sent=tv_sentiment, intraday=is_intra)
+                else:
+                    st.error("AI Training failed due to insufficient data quality.")
+            else: st.warning("Not enough intraday data to train AI.")
+
+    # --- RENDER FROM SESSION STATE ---
+    if 'pred_results' in st.session_state and 'pred_df' in st.session_state:
+        df = st.session_state.pred_df
+        mapped = st.session_state.pred_mapped
+        pred = st.session_state.pred_results
+        symbol = st.session_state.last_sym
+        is_intra = "Intraday" in st.session_state.get('last_mode','')
+        
+        live_price = get_realtime_price(symbol, mapped)
         is_indian = mapped.endswith('.NS') or mapped.endswith('.BO') or mapped.startswith('^')
         us_stocks = {'AAPL', 'GOOGL', 'MSFT', 'AMZN', 'TSLA', 'NVDA', 'META', 'NFLX', 'AMD', 'INTC', 'CRM', 'ORCL', 'UBER', 'SNAP', 'COIN', 'PLTR', 'DIS', 'BA', 'JPM', 'V', 'MA', 'KO', 'PEP', 'WMT', 'PG', 'JNJ'}
         is_us = any(mapped.startswith(u) for u in us_stocks)
-        
         curr = '₹' if (is_indian or not is_us) else '$'
         
-        # Display Current Price Card
-        if live_price is not None:
-            cur = live_price
-            prev = live_price  # fallback
-            if df is not None and not df.empty:
-                close = df['Close']
-                if isinstance(close, pd.DataFrame): close = close.iloc[:,0]
-                prev = close.dropna().iloc[-1] if len(close) > 0 else live_price
-            
-            chg = cur - prev
-            pct = (chg / prev * 100) if prev != 0 else 0
-            cls = 'change-up' if chg >= 0 else 'change-down'
-            
-            ut_s = "BUY 🚀" if cur > df.iloc[-1]['UT_Trail'] else "SELL 💥"
-            ut_color = "#10b981" if "BUY" in ut_s else "#ef4444"
+        if live_price:
+            prev = df.iloc[-1]['Close'] if not df.empty else live_price
+            chg = live_price - prev; pct = (chg/prev*100) if prev!=0 else 0
+            ut_s = "BUY 🚀" if live_price > df.iloc[-1]['UT_Trail'] else "SELL 💥"
+            ut_color = "#00b386" if "BUY" in ut_s else "#ef4444"
             
             st.markdown(f"""<div class="stock-card" style="padding:1.5rem; border-right: 10px solid {ut_color}">
                 <div style="display:flex; justify-content:space-between; align-items:center">
-                    <div>
-                        <div class="name" style="font-size:1rem">📊 {symbol}</div>
-                        <div class="price" style="font-size:2rem">{curr}{cur:,.2f}</div>
-                        <div class="{cls}" style="font-size:1rem">{'▲' if chg>=0 else '▼'} {chg:+,.2f} ({pct:+.2f}%)</div>
-                    </div>
-                    <div style="text-align:right">
-                        <div style="font-size:0.7rem; color:#94a3b8; text-transform:uppercase">UT Bot Indicator</div>
-                        <div style="font-size:1.5rem; color:{ut_color}; font-weight:900">{ut_s}</div>
-                    </div>
-                </div>
-            </div>""", unsafe_allow_html=True)
-            
-            # NEW: Screener.in Deep Fundamentals Button
-            clean_sym = mapped.replace('.NS', '').replace('.BO', '')
-            st.link_button(f"🌐 Visit Full Screener.in Profile for {symbol}", 
-                           f"https://www.screener.in/company/{clean_sym}/", 
-                           use_container_width=True)
+                    <div><div class="name">📊 {symbol} ({mapped})</div><div class="price" style="font-size:2.2rem">{curr}{live_price:,.2f}</div>
+                    <div class="{'change-up' if chg>=0 else 'change-down'}">{'▲' if chg>=0 else '▼'} {chg:+,.2f} ({pct:+.2f}%)</div></div>
+                    <div style="text-align:right"><div style="font-size:0.7rem; color:#94a3b8; text-transform:uppercase">UT Bot Signal</div>
+                    <div style="font-size:1.6rem; color:{ut_color}; font-weight:900">{ut_s}</div></div>
+                </div></div>""", unsafe_allow_html=True)
 
-            # NEW: Fundamental Pulse (Screener.in Data Source)
-            with st.spinner("📊 Fetching Screener fundamentals..."):
-                f_data = fetch_fundamentals(mapped)
-            
-            if f_data:
-                st.markdown('<div class="section-head">🏛️ Screener.in Fundamentals</div>', unsafe_allow_html=True)
-                fc1, fc2, fc3, fc4 = st.columns(4)
-                
-                # Format Market Cap to Cr (Indian style)
-                mcap_in_cr = f_data['mkt_cap'] / 10000000 if "₹" in curr else f_data['mkt_cap']
-                mcap_unit = "Cr" if "₹" in curr else ""
-                
-                fc1.metric("Market Cap", f"{mcap_in_cr:,.0f} {mcap_unit}")
-                fc2.metric("P/E Ratio", f"{f_data['pe']:.2f}" if f_data['pe'] else "N/A")
-                fc3.metric("Div. Yield", f"{f_data['div_yield']*100:.2f}%" if f_data['div_yield'] else "0.0%")
-                fc4.metric("P/B Ratio", f"{f_data['pb']:.2f}" if f_data['pb'] else "N/A")
-                
-                st.markdown(f"**Sector:** {f_data['sector']} | **52W High:** {curr}{f_data['high_52']:,.2f} | **52W Low:** {curr}{f_data['low_52']:,.2f}")
-                st.write("") # Spacer
+        st.markdown('<div class="section-head">📺 Live Analytics Dashboard</div>', unsafe_allow_html=True)
+        tv_tabs = st.tabs(["📊 Radar Chart", "🤖 AI Analytics", "🏛️ Details"])
+        with tv_tabs[0]: st.components.v1.html(build_tradingview_chart(symbol, mapped), height=600 if is_intra else 800)
+        with tv_tabs[1]:
+            sc1, sc2 = st.columns(2)
+            with sc1: st.components.v1.html(build_tradingview_analysis(symbol, mapped), height=450)
+            with sc2: st.plotly_chart(build_gauge(pred['today']['up_prob'], pred['today']['signal'], "AI Strength"), use_container_width=True)
+        with tv_tabs[2]:
+            st.components.v1.html(build_tradingview_profile_widget(symbol, mapped), height=400)
 
-            # NEW: AI Prediction Mode
-            pred_mode = st.radio("Prediction Mode:", ["📅 Daily (Swing Trade)", "📈 Intraday (Next 1 Hour)"], horizontal=True)
-            
-            # Re-fetch for Intraday mode
-            if "Intraday" in pred_mode:
-                with st.spinner("⚡ Fetching 15m intraday data..."):
-                    df_run, _ = fetch_stock(symbol, interval='15m', period='5d') # Reduced from 7d to 5d for faster mobile loading
-            else:
-                df_run = df
+        st.markdown('<div class="section-head">🎯 AI Signal Forecast</div>', unsafe_allow_html=True)
+        st.markdown('<div class="forecast-container">', unsafe_allow_html=True)
+        tc1, tc2, tc3 = st.columns(3)
+        sig_cls = {'BUY': 'signal-buy', 'SELL': 'signal-sell', 'HOLD': 'signal-hold'}
+        sig_emoji = {'BUY': '🚀 BUY', 'SELL': '💥 SELL', 'HOLD': '⚖️ HOLD'}
+        with tc1: st.markdown(f'<div class="{sig_cls[pred["today"]["signal"]]}">CURRENT<br><span style="font-size:1.4rem;">{sig_emoji[pred["today"]["signal"]]}</span><p style="font-size:0.7rem">Conf: {pred["today"]["confidence"]:.1%}</p></div>', unsafe_allow_html=True)
+        with tc2: st.markdown(f'<div class="{sig_cls[pred["tomorrow"]["signal"]]}">SHORT TERM<br><span style="font-size:1.4rem;">{sig_emoji[pred["tomorrow"]["signal"]]}</span><p style="font-size:0.7rem">Conf: {pred["tomorrow"]["confidence"]:.1%}</p></div>', unsafe_allow_html=True)
+        with tc3: st.markdown(f'<div class="{sig_cls[pred["day_after"]["signal"]]}">NEAR TERM<br><span style="font-size:1.4rem;">{sig_emoji[pred["day_after"]["signal"]]}</span><p style="font-size:0.7rem">Conf: {pred["day_after"]["confidence"]:.1%}</p></div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
-            # AI Prediction Logic
-            if df_run is not None and len(df_run) > 30:
-                # --- UT Bot Alerts Integration ---
-                df_run = calculate_ut_bot(df_run)
-                
-                close = df_run['Close']; vol = df_run['Volume']
-                if isinstance(close, pd.DataFrame): close = close.iloc[:,0]
-                if isinstance(vol, pd.DataFrame): vol = vol.iloc[:,0]
-                prices = close.dropna().astype(float).tolist()
-                volumes = vol.dropna().astype(float).tolist()
+        st.markdown("### 📊 Market Pulse & Patterns")
+        st.plotly_chart(build_candle_chart(df.tail(60), symbol), use_container_width=True)
+        
+        st.markdown('<div class="forecast-container">', unsafe_allow_html=True)
+        ac1, ac2 = st.columns(2)
+        res = detect_candle_pattern(df.tail(3)); live_res = analyze_live_candle(df)
+        p_cls = "pulse-green" if "UP" in live_res["bias"] else "pulse-red" if "DOWN" in live_res["bias"] else ""
+        with ac1:
+            st.markdown(f'''<div style="background:#1e293b; color:#e2e8f0; padding:15px; border-radius:10px; border:1px solid #334155; height:200px; text-align:center;">
+                <h4 style="margin:0; font-size:0.8rem; color:#94a3b8;">LIVE CANDLE</h4>
+                <div class="{p_cls}" style="margin-top:10px;">{live_res["bias"]}</div>
+                <div style="font-size:1.5rem; font-weight:800; color:{live_res["color"]};">{live_res["pct"]:+.2f}%</div>
+                <div style="font-size:0.8rem; color:#94a3b8;">{live_res["desc"]}</div></div>''', unsafe_allow_html=True)
+        with ac2:
+            st.markdown(f'''<div style="background:#1e293b; color:#e2e8f0; padding:15px; border-radius:10px; border:1px solid #334155; height:200px;">
+                <h4 style="margin:0; font-size:0.8rem; color:#94a3b8;">PATTERN</h4>
+                <b>{res["pattern"]}</b><br><span style="font-size:0.85rem; color:#94a3b8;">{res["advice"]}</span></div>''', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
-                if is_commodity:
-                    fx = get_usd_inr(); prices = [p*fx for p in prices]
+        # -- Verdict Engine --
+        ai_s = pred["today"]["signal"]
+        ut_s = "BUY" if df.iloc[-1]['Close'] > df.iloc[-1]['UT_Trail'] else "SELL"
+        tv_b = pred['today']['tv_bias']
+        news_b = pred['today']['news_bias']
+        
+        ai_pts = 4.5 if ai_s == 'BUY' else -4.5 if ai_s == 'SELL' else 0
+        tv_pts = 2.5 if tv_b > 0.05 else -2.5 if tv_b < -0.05 else 0
+        ut_pts = 2.0 if ut_s == "BUY" else -2.0
+        news_pts = 2.0 if news_b > 0.05 else -2.0 if news_b < -0.05 else 0
+        
+        score = ai_pts + tv_pts + ut_pts + news_pts
+        up_c = sum([1 for p in [ai_pts, tv_pts, ut_pts, news_pts] if p > 0])
+        dn_c = sum([1 for p in [ai_pts, tv_pts, ut_pts, news_pts] if p < 0])
+        ag_pct = (max(up_c, dn_c) / 4)
+        
+        AGREE_MIN = 0.60 if is_intra else 0.75
+        SCORE_MIN = 3.5 if is_intra else 6.0
+        
+        v_title = "Intraday Scalper Verdict" if is_intra else "Supreme Intelligence Verdict"
+        if score >= SCORE_MIN and ag_pct >= AGREE_MIN: f_sig, f_col, f_desc = "STRONG BUY 🚀", "#00b386", "High conviction technical setup confirmed."
+        elif score >= 2.5 and ag_pct >= 0.50: f_sig, f_col, f_desc = "BUY 📈", "#10b981", "Bullish bias detected."
+        elif score <= -SCORE_MIN and ag_pct >= AGREE_MIN: f_sig, f_col, f_desc = "STRONG SELL 💥", "#eb5b3c", "High conviction bearish setup confirmed."
+        elif score <= -2.5 and ag_pct >= 0.50: f_sig, f_col, f_desc = "SELL 📉", "#ef4444", "Bearish momentum detected."
+        else: f_sig, f_col, f_desc = "WAIT / HOLD ⚖️", "#f59e0b", "Neutral setup or conflicting signals."
 
-                with st.spinner("📰 Analyzing news..."): 
-                    news = fetch_market_news(f"{symbol} share stock market news")
-                    sent, scored_news = analyze_news(news)
-
-                with st.spinner("🧠 Training AI ensemble..."):
-                    metrics = st.session_state.engine.train(symbol, prices, volumes, sent)
-                
-                if metrics:
-                    with st.spinner("📡 Fetching TradingView Sentiment..."):
-                        tv_sentiment = fetch_tv_sentiment(symbol, mapped)
-                        
-                    is_intra = "Intraday" in pred_mode
-                    pred = st.session_state.engine.predict(symbol, prices, volumes, sent, tv_sent=tv_sentiment, intraday=is_intra)
-                    if pred:
-                        pass # Moved to bottom
-                    else:
-                        st.warning("⚠️ Prediction failed for this stock.")
-                else:
-                    st.warning("⚠️ Not enough historical data for AI prediction (need 60+ days). Showing live price and chart only.")
-
-                # MOVED: TradingView Integration (now always visible if data exists)
-                st.markdown('<div class="section-head">📺 TradingView Live Chart & Deep Analysis</div>', unsafe_allow_html=True)
-                tv_tab1, tv_tab2, tv_tab3, tv_tab4, tv_tab5 = st.tabs(["📊 Advanced Chart", "🔍 Stock Profile", "📈 Technical Pulse", "📰 TradingView News", "🤖 AI vs TradingView"])
-                with tv_tab1:
-                    st.components.v1.html(build_tradingview_chart(symbol, mapped), height=850)
-                with tv_tab2:
-                    st.components.v1.html(build_tradingview_profile_widget(symbol, mapped), height=400)
-                with tv_tab3:
-                    st.components.v1.html(build_tradingview_analysis(symbol, mapped), height=450)
-                with tv_tab4:
-                    st.components.v1.html(build_tradingview_news_widget(symbol, mapped), height=450)
-                with tv_tab5:
-                    sc1, sc2 = st.columns(2)
-                    with sc1:
-                        st.markdown("#### 📺 TradingView Technicals")
-                        st.components.v1.html(build_tradingview_analysis(symbol, mapped), height=450)
-                    with sc2:
-                        st.markdown("#### 🤖 Antigravity AI Prediction")
-                        if metrics and 'pred' in locals() and pred:
-                            st.plotly_chart(build_gauge(pred['today']['up_prob'], pred['today']['signal'], "AI Signal"), use_container_width=True)
-                            st.markdown(f"**AI Confidence:** {pred['today']['confidence']:.1%}")
-                            st.markdown(f"**Market Sentiment:** {sent:+.2f}")
-                        else:
-                            st.info("AI Prediction not available for this stock yet (Training...)")
-
-                st.write("")
-                # Instruction for the user's pip error
-                try:
-                    from tradingview_ta import TA_Handler
-                except ImportError:
-                    st.warning("💡 **TradingView TA Library Missing**: Your system is having trouble installing dependencies automatically. Please run this command in your terminal: `python -m pip install tradingview-ta` to enable full mathematical integration.")
-
-                st.write("")
-
-                st.write("")
-                # --- NEW: 3-Day Forecast Signals ---
-                st.markdown('<div class="section-head">🎯 AI Signal Dashboard (3-Day Forecast)</div>', unsafe_allow_html=True)
-                tc1, tc2, tc3 = st.columns(3)
-                sig_cls = {'BUY': 'signal-buy', 'SELL': 'signal-sell', 'HOLD': 'signal-hold'}
-                sig_emoji = {'BUY': '🚀 BUY', 'SELL': '💥 SELL', 'HOLD': '⚖️ HOLD'}
-                
-                with tc1:
-                    st.markdown(f'<div class="{sig_cls[pred["today"]["signal"]]}">TODAY<br><span style="font-size:1.4rem;">{sig_emoji[pred["today"]["signal"]]}</span><br>'
-                                f'<span style="font-size:0.8rem;opacity:0.9;">Confidence: {pred["today"]["confidence"]:.1%}</span></div>', unsafe_allow_html=True)
-                with tc2:
-                    st.markdown(f'<div class="{sig_cls[pred["tomorrow"]["signal"]]}">TOMORROW<br><span style="font-size:1.4rem;">{sig_emoji[pred["tomorrow"]["signal"]]}</span><br>'
-                                f'<span style="font-size:0.8rem;opacity:0.9;">Confidence: {pred["tomorrow"]["confidence"]:.1%}</span></div>', unsafe_allow_html=True)
-                with tc3:
-                    st.markdown(f'<div class="{sig_cls[pred["day_after"]["signal"]]}">DAY 3<br><span style="font-size:1.4rem;">{sig_emoji[pred["day_after"]["signal"]]}</span><br>'
-                                f'<span style="font-size:0.8rem;opacity:0.9;">Confidence: {pred["day_after"]["confidence"]:.1%}</span></div>', unsafe_allow_html=True)
-
-                st.write("")
-                # --- VERTICAL LAYOUT: Analysis Below Chart ---
-                st.markdown("### 📊 Internal Plotly Chart")
-                st.plotly_chart(build_candle_chart(df_run.tail(60), symbol), use_container_width=True)
-                
-                # Analysis Section below the chart
-                st_live_col, st_conf_col = st.columns(2)
-                
-                # Confirmed Pattern (Closed)
-                res = detect_candle_pattern(df_run.tail(3))
-                # Live Pulse (Currently Forming)
-                live_res = analyze_live_candle(df_run)
-                p_cls = "pulse-green" if "UP" in live_res["bias"] else "pulse-red" if "DOWN" in live_res["bias"] else ""
-                
-                with st_live_col:
-                    st.markdown(f'''
-                    <div style="background:#1e293b; color:#e2e8f0; padding:15px; border-radius:10px; border:1px solid #334155; margin-bottom:15px; height:220px;">
-                        <h4 style="margin-top:0; color:#94a3b8; font-size:0.8rem; text-transform:uppercase;">Live Candle Monitor</h4>
-                        <div style="text-align:center; padding:10px 0;">
-                            <div class="{p_cls}">{live_res["bias"]}</div>
-                            <div style="font-size:1.5rem; font-weight:800; color:{live_res["color"]}; margin-top:8px;">{live_res["pct"]:+.2f}%</div>
-                            <div style="font-size:0.85rem; color:#94a3b8; margin-top:4px;">{live_res["desc"]}</div>
-                        </div>
-                    </div>''', unsafe_allow_html=True)
-
-                with st_conf_col:
-                    st.markdown(f'''
-                    <div style="background:#1e293b; color:#e2e8f0; padding:15px; border-radius:10px; border:1px solid #334155; height:220px;">
-                        <h4 style="margin-top:0; color:#94a3b8; font-size:0.8rem; text-transform:uppercase;">Confirmed Analysis</h4>
-                        <b>Recent Pattern:</b> {res["pattern"]} <br>
-                        <b>Suggested Strategy:</b> <br><span style="font-size:0.9rem">{res["advice"]}</span>
-                    </div>''', unsafe_allow_html=True)
-
-                st.markdown(f'''
-                <div style="background:#1e293b; color:#e2e8f0; padding:15px; border-radius:10px; border:1px solid #334155; width:100%;">
-                    <h4 style="margin-top:0; color:#94a3b8; font-size:0.8rem; text-transform:uppercase;">Fundamental & Technical Deep Insight</h4>
-                    <span style="font-size:0.85rem; color:#94a3b8">
-                    Our engine detected:
-                    <ul style="padding-left:15px; margin:5px 0;">
-                        <li>Technical Rating: <b>{tv_sentiment:+.2f}</b></li>
-                        <li>News Sentiment: <b>{sent:+.2f}</b></li>
-                        <li>UT Bot Signal: <b>{"BUY 🚀" if df_run.iloc[-1]["Close"] > df_run.iloc[-1]["UT_Trail"] else "SELL 💥"}</b></li>
-                        <li>AI Priority: <b style="color:#667eea">{pred["today"]["signal"]}</b></li>
-                        <li>AI Confidence: <b>{pred["today"]["confidence"]:.1%}</b></li>
-                    </ul>
-                    </span>
-                </div>
-                ''', unsafe_allow_html=True)
-                # -------------------------------
-                
-                # --- ADVANCED ANALYST DATA (Consolidated to resolve confusion) ---
-                with st.expander("🛠️ Advanced Analyst Data & Market Context", expanded=False):
-                    st.subheader("🤖 Model Accuracy")
-                    mc1, mc2, mc3 = st.columns(3)
-                    if "Intraday" in pred_mode:
-                        mc1.metric("15-Min Accuracy", f"{metrics['d1_acc']:.1%}")
-                        mc2.metric("30-Min Accuracy", f"{metrics['d2_acc']:.1%}")
-                        mc3.metric("60-Min Accuracy", f"{metrics['d4_acc']:.1%}")
-                    else:
-                        mc1.metric("1-Day Accuracy", f"{metrics['d1_acc']:.1%}")
-                        mc2.metric("2-Day Accuracy", f"{metrics['d2_acc']:.1%}")
-                        mc3.metric("3-Day Accuracy", f"{metrics.get('d3_acc', 0):.1%}")
-
-                    if scored_news:
-                        st.subheader("📰 News Sentiment Details")
-                        sl = "🟢 Bullish" if sent>0.2 else "🔴 Bearish" if sent<-0.2 else "🟡 Neutral"
-                        st.markdown(f"**Current Sentiment Bias: {sl} ({sent:+.2f})**")
-                        for n in scored_news[:6]:
-                            scls = {'positive':'sentiment-pos','negative':'sentiment-neg'}.get(n['label'],'sentiment-neu')
-                            st.markdown(f'<div class="news-card"><span class="{scls}">[{n["label"].upper()}]</span> '
-                                        f'{n["title"]}</div>', unsafe_allow_html=True)
-                
-                
-                # --- FINAL MASTER VERDICT ---
-                if pred:
-                    # --- UNIFIED INTELLIGENCE LOGIC ---
-                    res = detect_candle_pattern(df_run.tail(3))
-                    pat_l = res["pattern"].lower()
-                    
-                    ai_s = pred["today"]["signal"]
-                    tv_str = "BUY" if tv_sentiment > 0.1 else "SELL" if tv_sentiment < -0.1 else "NEUTRAL"
-                    pat_str = "BULLISH" if ('bullish' in pat_l or 'hammer' in pat_l) else "BEARISH" if ('bearish' in pat_l or 'star' in pat_l) else "NEUTRAL"
-                    news_str = "BULLISH" if sent > 0.2 else "BEARISH" if sent < -0.2 else "NEUTRAL"
-                    
-                    ut_last = df_run.iloc[-1]
-                    ut_s = "BUY" if ut_last['Close'] > ut_last['UT_Trail'] else "SELL"
-
-                    ai_pts = 4 if ai_s == 'BUY' else -4 if ai_s == 'SELL' else 0
-                    tv_pts = 2 if tv_str == "BUY" else -2 if tv_str == "SELL" else 0
-                    ut_pts = 2 if ut_s == "BUY" else -2
-                    pat_pts = 1.5 if pat_str == "BULLISH" else -1.5 if pat_str == "BEARISH" else 0
-                    news_pts = 1.5 if news_str == "BULLISH" else -1.5 if news_str == "BEARISH" else 0
-                    
-                    score = ai_pts + tv_pts + ut_pts + pat_pts + news_pts
-                    
-                    # Calculate Agreement Score (How many point in same direction?)
-                    total_indicators = 5
-                    pointing_up = sum([1 for p in [ai_pts, tv_pts, ut_pts, pat_pts, news_pts] if p > 0])
-                    pointing_down = sum([1 for p in [ai_pts, tv_pts, ut_pts, pat_pts, news_pts] if p < 0])
-                    agreement_pct = (max(pointing_up, pointing_down) / total_indicators) * 100
-                    
-                    # Target Verdict Fix
-                    if score >= 4.5: fin_sig, fin_col, act_desc = "POWERFUL BUY 🚀", "#00b386", "All major systems agree. High probability trend detected."
-                    elif score >= 2.0: fin_sig, fin_col, act_desc = "BUY 📈", "#10b981", "Bullish bias dominates. Consider entry on dips."
-                    elif score <= -4.5: fin_sig, fin_col, act_desc = "POWERFUL SELL 💥", "#eb5b3c", "Unanimous bearish signals. Strong downward pressure."
-                    elif score <= -2.0: fin_sig, fin_col, act_desc = "SELL 📉", "#ef4444", "Bearish signals outweigh. Avoid buying."
-                    else: fin_sig, fin_col, act_desc = "WAIT / HOLD ⚖️", "#f59e0b", "Signals are conflicting. No clear trade advantage right now."
-
-                    # Track Drivers
-                    drivers = []
-                    if abs(ai_pts) >= 4: drivers.append(f"AI Math ({ai_s})")
-                    if abs(tv_pts) >= 2: drivers.append(f"TV Technicals ({tv_str})")
-                    if abs(ut_pts) >= 2: drivers.append(f"UT Bot ({ut_s})")
-                    if abs(pat_pts) >= 1.5: drivers.append(f"Chart Pattern ({pat_str})")
-                    if abs(news_pts) >= 1.5: drivers.append(f"News Sentiment ({news_str})")
-                    driver_text = " + ".join(drivers) if drivers else "Mixed Indicators"
-
-                    # Conflict Insight
-                    if agreement_pct <= 50:
-                        insight = "⚠️ <b>High Conflict</b>: Mathematical Trend vs Market Sentiment are fighting. Wait for a clear breakout."
-                    elif (ai_pts > 0 and news_pts < 0):
-                        insight = "💡 <b>AI vs News</b>: The numbers are bullish, but current news headlines suggest caution."
-                    elif (ai_pts < 0 and news_pts > 0):
-                        insight = "💡 <b>AI vs News</b>: Math is bearish, but news sentiment is attempting to push back."
-                    else:
-                        insight = "✅ <b>Trend Sync</b>: Signals are currently in harmony for this direction."
-
-                    # Fixed: Removed leading spaces to prevent Markdown code block interpretation
-                    consensus_html = (
-f'<div style="background: {fin_col}15; border: 2px solid {fin_col}; padding: 35px; border-radius: 20px; margin: 30px 0; text-align: center; border-left: 10px solid {fin_col};">'
-f'<div style="background:{fin_col}; color:white; padding:4px 15px; border-radius:30px; display:inline-block; font-size:0.75rem; font-weight:700; text-transform:uppercase; margin-bottom:10px;">Supreme Intelligence Verdict</div>'
-f'<h1 style="margin:10px 0; color:{fin_col}; font-size: 4rem; font-weight: 900; letter-spacing:-1px;">{fin_sig}</h1>'
-f'<div style="font-size:1.3rem; color:#e2e8f0; font-weight:600;">{act_desc}</div>'
-
-f'<div style="display:flex; justify-content:center; gap:20px; margin:25px 0;">'
-f'<div style="background:rgba(255,255,255,0.05); padding:15px; border-radius:15px; border:1px solid rgba(255,255,255,0.1); flex:1;">'
-f'<div style="font-size:0.75rem; color:#94a3b8; text-transform:uppercase;">Agreement Level</div>'
-f'<div style="font-size:1.4rem; color:#cbd5e1; font-weight:800;">{agreement_pct:.0%}%</div>'
-f'</div>'
-f'<div style="background:rgba(255,255,255,0.05); padding:15px; border-radius:15px; border:1px solid rgba(255,255,255,0.1); flex:2;">'
-f'<div style="font-size:0.75rem; color:#94a3b8; text-transform:uppercase;">Dominant Driver</div>'
-f'<div style="font-size:1rem; color:#cbd5e1; font-weight:700;">{driver_text}</div>'
-f'</div>'
-f'</div>'
-
-f'<div style="background:rgba(0,0,0,0.3); padding:15px; border-radius:12px; border:1px dashed rgba(255,255,255,0.2); text-align:left;">'
-f'<div style="font-size:0.75rem; color:#94a3b8; text-transform:uppercase; margin-bottom:5px;">System Insight</div>'
-f'<div style="color:#e2e8f0; font-size:0.95rem;">{insight}</div>'
-f'</div>'
-f'</div>'
-)
-                    st.markdown(consensus_html, unsafe_allow_html=True)
-            else:
-                st.warning("⚠️ Not enough historical data for AI prediction (need 60+ days). Showing live price and chart only.")
-                st.plotly_chart(build_candle_chart(df.tail(60), symbol), use_container_width=True)
-        else:
-            st.warning("⚠️ This stock is too new or symbol not found for AI prediction. Showing live price only.")
-            if df is not None and not df.empty:
-                st.plotly_chart(build_candle_chart(df, symbol), use_container_width=True)
-
-
-
+        st.markdown(f'''<div class="verdict-container" style="background:{f_col}15; border:2px solid {f_col}; padding:30px; border-radius:20px; text-align:center; margin-top:30px; border-left: 8px solid {f_col};">
+            <div style="background:{f_col}; color:white; padding:4px 15px; border-radius:30px; display:inline-block; font-size:0.75rem; font-weight:700; text-transform:uppercase;">{v_title}</div>
+            <h1 class="verdict-h1" style="color:{f_col}; font-size:3.5rem; margin:15px 0; font-weight:900;">{f_sig}</h1>
+            <div class="verdict-desc" style="color:#e2e8f0; font-weight:600; font-size:1.2rem;">{f_desc}</div>
+            <div style="margin-top:20px; text-align:left; background:rgba(255,255,255,0.05); padding:15px; border-radius:12px;">
+                <div style="font-size:0.7rem; color:#94a3b8;">AI CONFIDENCE SUMMARY</div>
+                <div style="font-size:1.1rem; color:#e2e8f0; font-weight:800;">{pred['today']['confidence']:.1%} Probability of Trend</div>
+            </div></div>''', unsafe_allow_html=True)
 # ── PAGE: Market News ─────────────────────────────────────────────────────
 def page_news():
     st.subheader("📰 Market News — Live Aggregation")
@@ -1881,11 +1760,27 @@ def page_screener():
 
 # ── PAGE: Sector View ────────────────────────────────────────────────────
 def page_sector_view():
-    st.subheader("📈 Sector-wise Performance")
+    st.subheader("📈 Sector-wise Performance & AI Forecast")
     for sector, syms in DASHBOARD_CATEGORIES.items(): 
         if sector == '🏛️ Indices': continue
         unique_syms = list(dict.fromkeys(syms))[:5]
-        with st.expander(f"{sector}"):
+        
+        # Calculate Sector AI Pulse
+        sector_sentiment = 0
+        signals = []
+        for s in unique_syms[:3]: # Scan top 3 for speed
+            idf, _ = fetch_stock(s, 20)
+            if idf is not None:
+                idf = calculate_ut_bot(idf)
+                bi = 1 if idf.iloc[-1]['Close'] > idf.iloc[-1]['UT_Trail'] else -1
+                signals.append(bi)
+        
+        sector_avg = sum(signals)/len(signals) if signals else 0
+        s_verdict = "BULLISH 🟢" if sector_avg > 0.3 else "BEARISH 🔴" if sector_avg < -0.3 else "NEUTRAL 🟡"
+        s_color = "#10b981" if "BULLISH" in s_verdict else "#ef4444" if "BEARISH" in s_verdict else "#94a3b8"
+
+        with st.expander(f"{sector} — AI Forecast: {s_verdict}"):
+            st.markdown(f'<div style="font-size:0.8rem; color:{s_color}; font-weight:700; margin-bottom:10px;">Sector AI Verdict: {s_verdict}</div>', unsafe_allow_html=True)
             cols = st.columns(len(unique_syms))
             for i, sym in enumerate(unique_syms):
                 info = get_price_info(sym, 5)
