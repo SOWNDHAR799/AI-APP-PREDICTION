@@ -16,6 +16,9 @@ import urllib.request
 import xml.etree.ElementTree as ET
 import urllib.parse
 from bs4 import BeautifulSoup
+import joblib
+import os
+from prediction_tracker import save_prediction, load_history, load_accuracy
 warnings.filterwarnings('ignore')
 
 st.set_page_config(page_title="AI Market Predictor Pro", page_icon="🧠", layout="wide",
@@ -692,15 +695,15 @@ def detect_candle_pattern(df):
     
     # Doji
     if cBody / cRange < 0.1:
-        return {"pattern": "Doji ⚖️ (Indecision)", "advice": "Hold. Wait for breakout above Doji high or breakdown below low."}
+        return {"pattern": "Doji ⚖️ (Indecision)", "advice": "Hold. Wait for breakout above Doji high or breakdown below low.", "score": 0.5}
         
     # Bullish Engulfing
     if pC < pO and cC > cO and cO <= pC and cC >= pO:
-        return {"pattern": "Bullish Engulfing 📈", "advice": f"**BUY ENTRY**: Buy if next candle crosses {cH:,.2f}. **STOP LOSS**: {cL:,.2f}"}
+        return {"pattern": "Bullish Engulfing 📈", "advice": f"**BUY ENTRY**: Buy if next candle crosses {cH:,.2f}. **STOP LOSS**: {cL:,.2f}", "score": 0.7}
         
     # Bearish Engulfing
     if pC > pO and cC < cO and cO >= pC and cC <= pO:
-        return {"pattern": "Bearish Engulfing 📉", "advice": f"**SELL ENTRY**: Short if next candle goes below {cL:,.2f}. **STOP LOSS**: {cH:,.2f}"}
+        return {"pattern": "Bearish Engulfing 📉", "advice": f"**SELL ENTRY**: Short if next candle goes below {cL:,.2f}. **STOP LOSS**: {cH:,.2f}", "score": 0.3}
         
     # Shadows
     lower_shadow = min(cO, cC) - cL
@@ -708,23 +711,23 @@ def detect_candle_pattern(df):
     
     # Hammer
     if lower_shadow > 2.0 * cBody and upper_shadow < cBody * 0.5:
-        if cC > cO: return {"pattern": "Bullish Hammer 🔨", "advice": f"**BUY ENTRY**: Buy if next candle crosses {cH:,.2f}. **STOP LOSS**: {cL:,.2f}"}
-        else: return {"pattern": "Hanging Man 🔻", "advice": f"**SELL ENTRY**: Wait for next candle to close below {cL:,.2f} before shorting."}
+        if cC > cO: return {"pattern": "Bullish Hammer 🔨", "advice": f"**BUY ENTRY**: Buy if next candle crosses {cH:,.2f}. **STOP LOSS**: {cL:,.2f}", "score": 0.7}
+        else: return {"pattern": "Hanging Man 🔻", "advice": f"**SELL ENTRY**: Wait for next candle to close below {cL:,.2f} before shorting.", "score": 0.3}
         
     # Shooting Star / Inverted Hammer
     if upper_shadow > 2.5 * cBody and lower_shadow < cBody * 0.5:
-        if cC < cO: return {"pattern": "Shooting Star 🌠", "advice": f"**SELL ENTRY**: Short if next candle goes below {cL:,.2f}. **STOP LOSS**: {cH:,.2f}"}
-        else: return {"pattern": "Inverted Hammer ⛏️", "advice": f"**BUY ENTRY**: Buy if next candle crosses {cH:,.2f}. **STOP LOSS**: {cL:,.2f}"}
+        if cC < cO: return {"pattern": "Shooting Star 🌠", "advice": f"**SELL ENTRY**: Short if next candle goes below {cL:,.2f}. **STOP LOSS**: {cH:,.2f}", "score": 0.3}
+        else: return {"pattern": "Inverted Hammer ⛏️", "advice": f"**BUY ENTRY**: Buy if next candle crosses {cH:,.2f}. **STOP LOSS**: {cL:,.2f}", "score": 0.7}
         
     # Marubozu (Strong momentum)
     if cBody / cRange > 0.9:
-        if cC > cO: return {"pattern": "Bullish Marubozu 🧨", "advice": "STRONG BUY: High momentum upward. Trail stop loss deeply."}
-        else: return {"pattern": "Bearish Marubozu 🧱", "advice": "STRONG SELL: Heavy selling pressure. Avoid buying."}
+        if cC > cO: return {"pattern": "Bullish Marubozu 🧨", "advice": "STRONG BUY: High momentum upward. Trail stop loss deeply.", "score": 0.7}
+        else: return {"pattern": "Bearish Marubozu 🧱", "advice": "STRONG SELL: Heavy selling pressure. Avoid buying.", "score": 0.3}
         
-    if cC > cO: return {"pattern": "Standard Bullish 🟢", "advice": "Trend is UP. Consider buying on minor intraday dips."}
-    elif cC < cO: return {"pattern": "Standard Bearish 🔴", "advice": "Trend is DOWN. Avoid fresh buying."}
+    if cC > cO: return {"pattern": "Standard Bullish 🟢", "advice": "Trend is UP. Consider buying on minor intraday dips.", "score": 0.7}
+    elif cC < cO: return {"pattern": "Standard Bearish 🔴", "advice": "Trend is DOWN. Avoid fresh buying.", "score": 0.3}
     
-    return {"pattern": "Neutral ➖", "advice": "No clear breakout pattern right now."}
+    return {"pattern": "Neutral ➖", "advice": "No clear breakout pattern right now.", "score": 0.5}
 
 # ── News Fetchers ─────────────────────────────────────────────────────────
 @st.cache_data(ttl=300)
@@ -904,6 +907,27 @@ class AIEngine:
     def __init__(self):
         self.models = {}
         self.scalers = {}
+        self.model_path = "model.pkl"
+
+    def save_model(self):
+        """Saves all models and scalers to a single file."""
+        try:
+            joblib.dump({'models': self.models, 'scalers': self.scalers}, self.model_path)
+            return True
+        except Exception:
+            return False
+
+    def load_model(self):
+        """Loads models and scalers from file."""
+        if os.path.exists(self.model_path):
+            try:
+                data = joblib.load(self.model_path)
+                self.models = data['models']
+                self.scalers = data['scalers']
+                return True
+            except Exception:
+                return False
+        return False
 
     @staticmethod
     def _rsi(prices, period=14):
@@ -925,10 +949,11 @@ class AIEngine:
             ema = (p * alpha) + (ema * (1 - alpha))
         return ema
 
-    def _features(self, prices, volumes, idx, lb=20):
+    def _features(self, prices, volumes, idx, lb=30):
+        # Increased lookback for ATR/ADX stability
         w = prices[max(0, idx-lb):idx]
         vw = volumes[max(0, idx-lb):idx]
-        if len(w) < 10: return None
+        if len(w) < 20: return None
         
         # 1. Basic Moving Averages
         ma5 = np.mean(w[-5:]); ma10 = np.mean(w[-10:]) if len(w)>=10 else np.mean(w); ma20 = np.mean(w)
@@ -937,64 +962,123 @@ class AIEngine:
         ema9 = self._ema(w, 9); ema21 = self._ema(w, 21)
         ema_cross = 1 if ema9 > ema21 else -1
         
-        # 3. Volatility (Bollinger & ATR approx)
+        # 3. Volatility (ATR-like approx)
         std20 = np.std(w)
-        bbu = ma20 + 2*std20; bbl = ma20 - 2*std20
-        bbp = (w[-1]-bbl)/(bbu-bbl) if bbu!=bbl else 0.5
-        bbw = (bbu-bbl)/ma20 if ma20!=0 else 0 # Volatility Expansion
+        atr_approx = np.mean(np.abs(np.diff(w[-10:]))) if len(w) > 10 else std20
         
-        # 4. Momentum & Trend
-        mom = (w[-1]-w[0])/w[0] if w[0]!=0 else 0
+        # 4. Momentum & Trend (MACD & RSI)
         rsi = self._rsi(w)
-        macd = ma5 - ma20
+        ema12 = self._ema(w, 12); ema26 = self._ema(w, 26)
+        macd = ema12 - ema26
         
-        # 5. Stochastic (Fast)
-        low_lb = np.min(w); high_lb = np.max(w)
-        stoch = (w[-1]-low_lb)/(high_lb-low_lb) if high_lb!=low_lb else 0.5
+        # 5. Trend Strength (ADX-like approx)
+        # Using directional movement count
+        up_move = sum(1 for i in range(1, len(w)) if w[i] > w[i-1]) / len(w)
+        adx_approx = abs(up_move - 0.5) * 2 # 0 to 1 scale
         
-        # 6. Volume Pulse
-        va = np.mean(vw) if len(vw)>0 else 0
-        vc = (vw[-1]-vw[0])/vw[0] if len(vw)>0 and vw[0]!=0 else 0
-        pmr = w[-1]/ma20 if ma20!=0 else 1
+        # 6. Volume Flow (OBV-like)
+        obv = 0
+        for i in range(1, len(w)):
+            if w[i] > w[i-1]: obv += vw[i]
+            elif w[i] < w[i-1]: obv -= vw[i]
+        obv_rel = obv / np.mean(vw) if np.mean(vw) > 0 else 0
         
-        return np.nan_to_num([ma5, ma10, ma20, ema9, ema21, ema_cross, std20, mom, rsi, macd, va, vc, bbp, bbw, stoch, pmr], nan=0.0, posinf=0.0, neginf=0.0).tolist()
+        # 7. Regimes
+        is_trending = 1 if adx_approx > 0.25 else 0
+        
+        return np.nan_to_num([
+            ma5, ma10, ma20, ema9, ema21, ema_cross, 
+            std20, rsi, macd, adx_approx, obv_rel, 
+            atr_approx, is_trending
+        ], nan=0.0, posinf=0.0, neginf=0.0).tolist()
 
     def train(self, symbol, prices, volumes, news_sent=0.0):
+        # Check for persisted model first
+        if self.load_model():
+            if symbol in self.models:
+                return {'d1_acc': self.models[symbol]['d1']['acc'], 'd2_acc': self.models[symbol]['d2']['acc'], 'd3_acc': self.models[symbol]['d3']['acc'], 'd4_acc': self.models[symbol]['d4']['acc']}
+
         prices = np.array(prices, dtype=float); volumes = np.array(volumes, dtype=float)
         X, y1, y2, y3, y4 = [], [], [], [], []
-        for i in range(25, len(prices)-4):
+        
+        # Triple Barrier Parameters
+        PROFIT_TARGET = 0.02 # 2% Profit
+        STOP_LOSS = 0.01    # 1% Stop Loss
+        
+        for i in range(30, len(prices)-10):
             f = self._features(prices, volumes, i)
             if f is None: continue
             X.append(f)
-            y1.append(1 if prices[i+1]>prices[i] else 0) # 1 step
-            y2.append(1 if prices[i+2]>prices[i] else 0) # 2 steps
-            y3.append(1 if prices[i+3]>prices[i] else 0) # 3 steps
-            y4.append(1 if prices[i+4]>prices[i] else 0) # 4 steps
             
-        if len(X) < 40: return None # More data needed for better stability
+            # Labeling for different windows (1, 2, 3, 5 steps)
+            for window, y_list in zip([2, 4, 6, 10], [y1, y2, y3, y4]):
+                label = 0 # Default: Neutral/Hold
+                entry_p = prices[i]
+                
+                # Check looking forward
+                for j in range(1, window + 1):
+                    future_p = prices[i + j]
+                    ret = (future_p - entry_p) / entry_p
+                    
+                    if ret >= PROFIT_TARGET:
+                        label = 1 # BUY (Target hit)
+                        break
+                    elif ret <= -STOP_LOSS:
+                        label = -1 # SELL (Stop hit)
+                        break
+                y_list.append(label)
+                
+        if len(X) < 50: return None
         X = np.array(X)
         sc = StandardScaler(); Xs = sc.fit_transform(X)
         
         self.models[symbol] = {'d1': {}, 'd2': {}, 'd3': {}, 'd4': {}}
         for day, labels in zip(['d1','d2','d3','d4'], [y1, y2, y3, y4]):
             y = np.array(labels)
-            
-            # CHRONOLOGICAL SPLIT (Important for Time Series Accuracy)
             split = int(len(Xs) * 0.8)
             Xtr, Xte = Xs[:split], Xs[split:]
             ytr, yte = y[:split], y[split:]
             
-            # Fine-tuned for High Precision
-            rf = RandomForestClassifier(n_estimators=150, max_depth=5, min_samples_leaf=3, random_state=42)
-            gb = GradientBoostingClassifier(n_estimators=120, max_depth=3, learning_rate=0.05, random_state=42)
+            rf = RandomForestClassifier(n_estimators=200, max_depth=8, min_samples_leaf=2, random_state=42)
+            gb = GradientBoostingClassifier(n_estimators=150, max_depth=4, learning_rate=0.03, random_state=42)
             
             rf.fit(Xtr,ytr); gb.fit(Xtr,ytr)
             self.models[symbol][day] = {'rf': rf, 'gb': gb, 'acc': (rf.score(Xte,yte) + gb.score(Xte,yte))/2}
             
         self.scalers[symbol] = sc
+        self.save_model() # Persist after training
         return {'d1_acc': self.models[symbol]['d1']['acc'], 'd2_acc': self.models[symbol]['d2']['acc'], 'd3_acc': self.models[symbol]['d3']['acc'], 'd4_acc': self.models[symbol]['d4']['acc']}
 
-    def predict(self, symbol, prices, volumes, news_sent=0.0, tv_sent=0.0, intraday=False):
+    def get_timeframe_status(self, df):
+        """Extracts technical status for a single timeframe dataframe."""
+        if df is None or len(df) < 20:
+            return {"trend": "Neutral", "rsi": 50, "pattern": "N/A", "score": 0.5}
+        
+        prices = df['Close'].dropna().values
+        rsi = self._rsi(prices)
+        ema9 = self._ema(prices, 9)
+        ema21 = self._ema(prices, 21)
+        pat_res = detect_candle_pattern(df)
+        
+        trend = "Bullish" if ema9 > ema21 else "Bearish"
+        score = 0.5
+        if trend == "Bullish": score += 0.1
+        else: score -= 0.1
+        if rsi < 40: score += 0.1
+        elif rsi > 60: score -= 0.1
+        
+        # Factor in pattern score if available
+        p_score = pat_res.get('score', 0.5)
+        final_score = (score * 0.7) + (p_score * 0.3)
+        
+        return {
+            "trend": trend,
+            "rsi": round(rsi, 2),
+            "pattern": pat_res.get('pattern', 'Neutral'),
+            "score": round(final_score, 4)
+        }
+
+    def predict(self, symbol, prices, volumes, news_sent=0.0, tv_sent=0.0, intraday=False, df=None, df_1h=None, df_1d=None):
         if symbol not in self.models: return None
         prices = np.array(prices, dtype=float); volumes = np.array(volumes, dtype=float)
         
@@ -1002,46 +1086,83 @@ class AIEngine:
         if f_latest is None: return None
         Xs_latest = self.scalers[symbol].transform([f_latest])
         
-        # We only need f_prev if we're doing the 'Daily' Tomorrow/Day After logic
-        Xs_prev = None
-        if not intraday:
-            f_prev = self._features(prices, volumes, len(prices)-1)
-            if f_prev is not None:
-                Xs_prev = self.scalers[symbol].transform([f_prev])
-            else:
-                Xs_prev = Xs_latest # Fallback if prev is missing
-        
+        # Standard Prediction logic remains similar for individual days
         steps = ['d1', 'd2', 'd4'] if intraday else ['d1', 'd1', 'd2']
-        feats = [Xs_latest, Xs_latest, Xs_latest] if intraday else [Xs_prev, Xs_latest, Xs_latest]
+        feats = [Xs_latest, Xs_latest, Xs_latest] # Simplified for MTF consistency
         labels = ['today', 'tomorrow', 'day_after']
         
-        results = {}
+        # Calculate scores for main DF
+        main_status = self.get_timeframe_status(df)
+        
+        # Multi-Timeframe Alignment
+        mtf_data = {"15m": main_status}
+        mtf_alignment = 1.0 # Multiplier
+        
+        if df_1h is not None:
+            mtf_data["1h"] = self.get_timeframe_status(df_1h)
+        if df_1d is not None:
+            mtf_data["1d"] = self.get_timeframe_status(df_1d)
+            
+        # Alignment Logic: Compare Daily trend with Current (15m/Main)
+        if "1d" in mtf_data:
+            if mtf_data["1d"]["trend"] != main_status["trend"]:
+                mtf_alignment = 0.8 # Penalty for trading against daily trend
+            else:
+                mtf_alignment = 1.1 # Reward for alignment
+
+        results = {'mtf_status': mtf_data}
+        is_trending = f_latest[-1] > 0.5 # Last feature is trending flag
+        
         for label, step_key, feat in zip(labels, steps, feats):
             m_set = self.models[symbol][step_key]
-            probs = [m_set[m].predict_proba(feat)[0][1] for m in ['rf', 'gb']]
             
-            # --- DYNAMIC SENSITIVITY LOGIC ---
-            if intraday:
-                # Intraday: More sensitive to News (15%) and Technicals (20%)
-                # High-speed momentum detection
-                up_prob = np.clip(np.mean(probs) + 0.15*news_sent + 0.20*tv_sent, 0, 1)
-                # Lower threshold for Intraday to catch small moves (like the 4 rupee rise)
-                CONFIDENCE_THRESHOLD = 0.58 
+            # 3-Class Probabilities: [-1, 0, 1]
+            probs_rf = m_set['rf'].predict_proba(feat)[0]
+            probs_gb = m_set['gb'].predict_proba(feat)[0]
+            
+            # Ensure we handle classes correctly (some models might not see all classes in a small dataset)
+            classes = list(m_set['rf'].classes_)
+            p_buy = (probs_rf[classes.index(1)] + probs_gb[classes.index(1)]) / 2 if 1 in classes else 0
+            p_sell = (probs_rf[classes.index(-1)] + probs_gb[classes.index(-1)]) / 2 if -1 in classes else 0
+            
+            # Weighted Scoring: 50% ML, 30% Tech Status, 20% Convergence
+            raw_prob = p_buy if p_buy > p_sell else p_sell
+            ml_side = 1 if p_buy > p_sell else -1
+            
+            # Base final score
+            final_score = (0.5 * raw_prob) + (0.5 * main_status['score'])
+            
+            # Regime Awareness: Penalty in Ranging markets
+            if not is_trending:
+                final_score *= 0.85
+            
+            # Alignment multiplier
+            final_score *= mtf_alignment
+            final_score = min(max(final_score, 0), 1)
+            
+            # Decision Logic (The 75% High-Precision Guardrail)
+            HIGH_CONFIDENCE_THRESHOLD = 0.75
+            STRETCH_THRESHOLD = 0.60
+            
+            if final_score >= HIGH_CONFIDENCE_THRESHOLD:
+                sig = "STRONG BUY" if ml_side == 1 else "STRONG SELL"
+            elif final_score >= STRETCH_THRESHOLD:
+                sig = "BUY" if ml_side == 1 else "SELL"
             else:
-                # Daily: Conservative & Safe
-                up_prob = np.clip(np.mean(probs) + 0.10*news_sent + 0.15*tv_sent, 0, 1)
-                # Higher threshold for Swing trading safety
-                CONFIDENCE_THRESHOLD = 0.65
-                
-            dn_prob = 1 - up_prob
-            sig = 'BUY' if up_prob > CONFIDENCE_THRESHOLD else 'SELL' if dn_prob > CONFIDENCE_THRESHOLD else 'HOLD'
+                sig = "HOLD (Uncertain)"
+            
+            # Logic Override: If trending flag is off and score is mediocre, HOLD
+            if not is_trending and final_score < 0.70:
+                sig = "HOLD (Ranging Market)"
             
             results[label] = {
                 'signal': sig, 
-                'confidence': round(max(up_prob, dn_prob), 4), 
-                'up_prob': round(up_prob, 4),
-                'news_bias': round(0.15*news_sent if intraday else 0.10*news_sent, 4),
-                'tv_bias': round(0.20*tv_sent if intraday else 0.15*tv_sent, 4)
+                'confidence': round(final_score, 4), 
+                'ml_prob': round(raw_prob, 4),
+                'tech_score': main_status['score'],
+                'pattern_score': main_status['score'],
+                'rsi_val': main_status['rsi'],
+                'is_trending': is_trending
             }
         return results
 
@@ -1309,7 +1430,7 @@ def main():
     with st.sidebar:
         st.markdown("### 🧠 AI Predictor Pro")
         page = st.radio("Navigate", [
-            "🏠 Explore", "🔮 AI Prediction", "🔍 Stock Screener", "📰 Market News",
+            "🏠 Explore", "🔮 AI Prediction", "📈 AI Backtester", "🔍 Stock Screener", "📰 Market News",
             "📊 All Stocks", "🏆 Top Movers", "🔍 Explore Sectors"
         ], key="page")
         st.markdown("---")
@@ -1325,6 +1446,8 @@ def main():
         page_explore()
     elif page == "🔮 AI Prediction":
         page_prediction()
+    elif page == "📈 AI Backtester":
+        page_backtester()
     elif page == "🔍 Stock Screener":
         page_screener()
     elif page == "📰 Market News":
@@ -1502,8 +1625,89 @@ def page_explore():
         st.link_button("🔍 Screener.in", "https://www.screener.in/", use_container_width=True)
 
 
+# ── PAGE: AI Backtester ──────────────────────────────────────────────────
+def page_backtester():
+    st.subheader("📈 AI Historical Backtester")
+    st.caption("Evaluate the AI's performance on historical data to see how its weighted signals would have performed over the last 6 months.")
+    
+    symbol = st.text_input("Enter Stock Symbol for Backtesting", placeholder="RELIANCE, AAPL, etc.")
+    
+    if st.button("🚀 Run Backtest Analysis", use_container_width=True) and symbol:
+        symbol = symbol.strip().upper()
+        with st.spinner(f"🏃‍♂️ Running 6-month simulation for {symbol}..."):
+            df, mapped = fetch_stock(symbol, 250) # ~1 year of daily data
+            if df is not None and len(df) > 100:
+                # Prepare data
+                df = calculate_ut_bot(df)
+                prices = df['Close'].dropna().astype(float).tolist()
+                volumes = df['Volume'].dropna().astype(float).tolist()
+                
+                # Train/Load model
+                metrics = st.session_state.engine.train(symbol, prices, volumes)
+                
+                results = []
+                # Simulate last 60 trading days
+                test_len = 60
+                wins = 0
+                trades = 0
+                
+                for i in range(len(df) - test_len, len(df) - 5):
+                    # Slice data up to point i
+                    sub_df = df.iloc[:i]
+                    sub_prices = sub_df['Close'].tolist()
+                    sub_volumes = sub_df['Volume'].tolist()
+                    
+                    # Predict for T+3
+                    pred = st.session_state.engine.predict(symbol, sub_prices, sub_volumes, df=sub_df)
+                    if pred:
+                        sig = pred['today']['signal']
+                        if "BUY" in sig or "SELL" in sig:
+                            trades += 1
+                            entry_price = float(df.iloc[i]['Close'])
+                            future_price = float(df.iloc[i+3]['Close'])
+                            
+                            correct = False
+                            if "BUY" in sig: correct = future_price > entry_price
+                            elif "SELL" in sig: correct = future_price < entry_price
+                            
+                            if correct: wins += 1
+                            
+                            results.append({
+                                'Date': df.index[i].strftime('%Y-%m-%d'),
+                                'Signal': sig,
+                                'Entry': entry_price,
+                                'Result': '✅ WIN' if correct else '❌ LOSS'
+                            })
+                
+                # Render Results
+                if trades > 0:
+                    acc = wins / trades
+                    st.success(f"### Backtest Accuracy: {acc:.1%}")
+                    st.write(f"**Total Simulated Trades:** {trades} | **Wins:** {wins} | **Losses:** {trades - wins}")
+                    
+                    st.dataframe(pd.DataFrame(results), use_container_width=True)
+                else:
+                    st.warning("Model generated no signals during the simulation period.")
+            else:
+                st.error("Insufficient data for backtesting. Try another symbol.")
+
 # ── PAGE: AI Prediction ──────────────────────────────────────────────────
 def page_prediction():
+    # ── Accuracy Dashboard Header ─────────────────────────────────────
+    acc_ratio, total_trades = load_accuracy()
+    st.markdown(f'''
+        <div style="background: #1e293b; border: 1px solid #334155; padding: 15px; border-radius: 12px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; border-left: 6px solid #667eea;">
+            <div>
+                <div style="font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; font-weight: 700;">AI System Accuracy</div>
+                <div style="font-size: 1.5rem; font-weight: 900; color: #f8fafc;">{acc_ratio:.1%}</div>
+            </div>
+            <div style="text-align: right;">
+                <div style="font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; font-weight: 700;">Total Evaluated Signals</div>
+                <div style="font-size: 1.5rem; font-weight: 900; color: #f8fafc;">{total_trades}</div>
+            </div>
+        </div>
+    ''', unsafe_allow_html=True)
+
     st.subheader("🔮 AI Stock Prediction Engine (3-Day Forecast)")
     st.caption("This model analyzes historical trends, technical indicators, and news sentiment to predict if the price will go UP or DOWN for the next **3 days**.")
     
@@ -1545,14 +1749,22 @@ def page_prediction():
             
             is_intra = "Intraday" in pred_mode
             df_run = df
-            if is_intra:
-                with st.spinner("⚡ Fetching 14-day intraday memory..."):
+            
+            # Multi-Timeframe Fetching
+            with st.spinner("📡 Fetching Multi-Timeframe data (Daily, 1H, 15m)..."):
+                df_1d, _ = fetch_stock(symbol, days=250, interval='1d')
+                df_1h, _ = fetch_stock(symbol, period='1mo', interval='1h')
+                
+                if is_intra:
                     df_run, _ = fetch_stock(symbol, interval='15m', period='14d')
-                    if df_run is not None: df_run = calculate_ut_bot(df_run)
+                else:
+                    df_run = df_1d # Daily is main for swing
+                
+                if df_run is not None: df_run = calculate_ut_bot(df_run)
+                if df_1h is not None: df_1h = calculate_ut_bot(df_1h)
+                if df_1d is not None: df_1d = calculate_ut_bot(df_1d)
 
             if df_run is not None and len(df_run) > 30:
-                df_run['EMA9'] = df_run['Close'].ewm(span=9, adjust=False).mean()
-                df_run['EMA21'] = df_run['Close'].ewm(span=21, adjust=False).mean()
                 prices = df_run['Close'].dropna().astype(float).tolist()
                 volumes = df_run['Volume'].dropna().astype(float).tolist()
                 
@@ -1561,7 +1773,7 @@ def page_prediction():
                     if not news: news = fetch_market_news("Indian Stock Market Latest News")
                     sent, scored_news, primary_cat = analyze_news(news)
                     st.session_state.pred_catalyst = primary_cat
-                    st.session_state.pred_news_headlines = scored_news[:3] # Save for UI
+                    st.session_state.pred_news_headlines = scored_news[:3]
 
                 with st.spinner("🧠 Training Engine..."):
                     metrics = st.session_state.engine.train(symbol, prices, volumes, sent)
@@ -1571,7 +1783,19 @@ def page_prediction():
                     tv_sentiment = fetch_tv_sentiment(symbol, mapped)
                 
                 if metrics:
-                    st.session_state.pred_results = st.session_state.engine.predict(symbol, prices, volumes, sent, tv_sent=tv_sentiment, intraday=is_intra)
+                    res = st.session_state.engine.predict(symbol, prices, volumes, sent, tv_sent=tv_sentiment, intraday=is_intra, df=df_run, df_1h=df_1h, df_1d=df_1d)
+                    st.session_state.pred_results = res
+                    
+                    # Save prediction for future accuracy tracking
+                    if res and 'today' in res:
+                        save_prediction({
+                            'symbol': symbol,
+                            'signal': res['today']['signal'],
+                            'confidence': res['today']['confidence'],
+                            'price': live_price if live_price else float(df.iloc[-1]['Close']),
+                            'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            'correct': None
+                        })
                 else:
                     st.error("AI Training failed due to insufficient data quality.")
             else: st.warning("Not enough intraday data to train AI.")
@@ -1617,19 +1841,46 @@ def page_prediction():
 
         # 2. ANALYSIS TABS
         st.markdown('<div class="section-head">📺 Live Analytics Dashboard</div>', unsafe_allow_html=True)
-        tab_chart, tab_ai, tab_profile = st.tabs(["📊 Advanced Chart", "🤖 Intelligence Pulse", "🏛️ Stock Profile"])
+        tab_chart, tab_ai, tab_mtf, tab_profile = st.tabs(["📊 Advanced Chart", "🤖 Intelligence Pulse", "⏳ MTF Alignment", "🏛️ Stock Profile"])
         with tab_chart: st.components.v1.html(build_tradingview_chart(symbol, mapped), height=650)
         with tab_ai:
             sc1, sc2 = st.columns(2)
             with sc1: st.components.v1.html(build_tradingview_analysis(symbol, mapped), height=450)
-            with sc2: st.plotly_chart(build_gauge(pred['today']['up_prob'], pred['today']['signal'], "AI Signal Strength"), use_container_width=True)
+            with sc2: st.plotly_chart(build_gauge(pred['today']['ml_prob'], pred['today']['signal'], "AI Signal Strength"), use_container_width=True)
+        
+        with tab_mtf:
+            st.markdown("### ⏳ Multi-Timeframe Alignment Matrix")
+            mtf = pred.get('mtf_status', {})
+            if mtf:
+                rows = []
+                for tf, data in mtf.items():
+                    t_col = "🟢" if data['trend'] == "Bullish" else "🔴"
+                    rows.append({
+                        "Timeframe": tf.upper(),
+                        "Trend": f"{t_col} {data['trend']}",
+                        "RSI (14)": data['rsi'],
+                        "Candle Pattern": data['pattern']
+                    })
+                st.table(pd.DataFrame(rows))
+                
+                # Check for absolute alignment
+                trends = [d['trend'] for d in mtf.values()]
+                if all(t == "Bullish" for t in trends):
+                    st.success("✅ **MTF Alignment: BULLISH** (Strongest Confirmation)")
+                elif all(t == "Bearish" for t in trends):
+                    st.error("⚠️ **MTF Alignment: BEARISH** (High Downside Risk)")
+                else:
+                    st.warning("⚖️ **MTF Alignment: MIXED** (Trend Fragmentation)")
+            else:
+                st.info("MTF Data not available for this asset type.")
+
         with tab_profile: st.components.v1.html(build_tradingview_profile_widget(symbol, mapped), height=400)
 
         # 3. AI FORECAST DASHBOARD (Cleanly Aligned 3-Day Projection)
         st.markdown('<div class="section-head">🎯 AI Signal Forecast (3-Day Price Projection)</div>', unsafe_allow_html=True)
         tc1, tc2, tc3 = st.columns(3)
-        sig_cls = {'BUY': 'signal-buy', 'SELL': 'signal-sell', 'HOLD': 'signal-hold'}
-        sig_emoji = {'BUY': '🚀 BUY', 'SELL': '💥 SELL', 'HOLD': '⚖️ HOLD'}
+        sig_cls = {'STRONG BUY': 'signal-buy', 'BUY': 'signal-buy', 'STRONG SELL': 'signal-sell', 'SELL': 'signal-sell', 'HOLD': 'signal-hold', 'HOLD (Low Confidence)': 'signal-hold'}
+        sig_emoji = {'STRONG BUY': '🚀 STRONG BUY', 'BUY': '🚀 BUY', 'STRONG SELL': '💥 STRONG SELL', 'SELL': '💥 SELL', 'HOLD': '⚖️ HOLD', 'HOLD (Low Confidence)': '⚖️ HOLD'}
         l1, l2, l3 = ("15 MIN", "30 MIN", "1 HOUR") if is_intra else ("TODAY", "TOMORROW", "DAY AFTER")
         
         with tc1: st.markdown(f'<div class="{sig_cls[pred["today"]["signal"]]}">{l1}<br><span style="font-size:1.5rem;">{sig_emoji[pred["today"]["signal"]]}</span><p style="font-size:0.75rem">Conf: {pred["today"]["confidence"]:.1%}</p></div>', unsafe_allow_html=True)
@@ -1679,22 +1930,28 @@ def page_prediction():
             </div>
         ''', unsafe_allow_html=True)
 
-        # 7. SUPREME MASTER VERDICT (The Final Consolidated Decision)
+        # 7. WHY THIS PREDICTION? (Logic Explanation)
+        st.markdown('<div class="section-head">🔍 Why This Prediction?</div>', unsafe_allow_html=True)
+        today_res = pred['today']
+        exp_col1, exp_col2, exp_col3 = st.columns(3)
+        with exp_col1:
+            st.metric("ML Probability", f"{today_res['ml_prob']:.1%}", help="Probability from Random Forest & Gradient Boosting ensembles.")
+        with exp_col2:
+            st.metric("Technical Score", f"{today_res['tech_score']:.1%}", help="Score based on RSI and EMA crossovers.")
+        with exp_col3:
+            st.metric("Pattern Score", f"{today_res['pattern_score']:.1%}", help="Score from candlestick pattern recognition.")
+
+        # 8. SUPREME MASTER VERDICT (The Final Consolidated Decision)
         st.markdown('<br><hr><br>', unsafe_allow_html=True)
+        v_sig = today_res['signal']
+        v_conf = today_res['confidence']
         
-        # Weighted Scoring
-        ai_s = pred['today']['signal']
-        tv_s = "BUY" if fetch_tv_sentiment(symbol, mapped) > 0.1 else "SELL" if fetch_tv_sentiment(symbol, mapped) < -0.1 else "NEUTRAL"
-        pat_s = "BULLISH" if ("UP" in live_res["bias"] or "Bullish" in res["pattern"]) else "BEARISH" if ("DOWN" in live_res["bias"] or "Bearish" in res["pattern"]) else "NEUTRAL"
-        sent_s = "BULLISH" if sum([1 for h in headlines if h['label']=='positive']) > sum([1 for h in headlines if h['label']=='negative']) else "BEARISH" if sum([1 for h in headlines if h['label']=='positive']) < sum([1 for h in headlines if h['label']=='negative']) else "NEUTRAL"
-        
-        v_pts = (4 if ai_s=='BUY' else -4 if ai_s=='SELL' else 0) + (2 if tv_s=='BUY' else -2 if tv_s=='SELL' else 0) + (1.5 if pat_s=='BULLISH' else -1.5 if pat_s=='BEARISH' else 0) + (1.5 if sent_s=='BULLISH' else -1.5 if sent_s=='BEARISH' else 0)
-        
-        if v_pts >= 4: v_sig, v_col, v_desc = "POWERFUL BUY 🚀", "#00b386", "All major systems agree. High probability trend."
-        elif v_pts >= 1.5: v_sig, v_col, v_desc = "SCALP BUY 📈", "#10b981", "Bullish bias dominates momentum."
-        elif v_pts <= -4: v_sig, v_col, v_desc = "POWERFUL SELL 💥", "#eb5b3c", "Unanimous bearish signals detected."
-        elif v_pts <= -1.5: v_sig, v_col, v_desc = "SCALP SELL 📉", "#ef4444", "Bearish signals outweighing indicators."
-        else: v_sig, v_col, v_desc = "WAIT / HOLD ⚖️", "#f59e0b", "Conflicting signals. Wait for market alignment."
+        # Color & Description Mapping
+        if "STRONG BUY" in v_sig: v_col, v_desc = "#00b386", "Very high confidence bullish signal. Multiple systems align."
+        elif "BUY" in v_sig: v_col, v_desc = "#10b981", "Moderate bullish momentum detected."
+        elif "STRONG SELL" in v_sig: v_col, v_desc = "#eb5b3c", "High conviction bearish signal. Caution advised."
+        elif "SELL" in v_sig: v_col, v_desc = "#ef4444", "Bearish trends outweighing technicals."
+        else: v_col, v_desc = "#f59e0b", "Neutral or low confidence signal. Market indecision."
 
         reason_news = st.session_state.get('pred_catalyst', 'Market Momentum')
         
@@ -1702,6 +1959,7 @@ def page_prediction():
             <div style="background: {v_col}15; border: 2px solid {v_col}; padding: 35px; border-radius: 20px; text-align: center; border-left: 10px solid {v_col}; margin-bottom:30px;">
                 <div style="background:{v_col}; color:white; padding:4px 15px; border-radius:30px; display:inline-block; font-size:0.75rem; font-weight:700; text-transform:uppercase;">Supreme AI Verdict</div>
                 <h1 style="margin:10px 0; color:{v_col}; font-size: 3.5rem; font-weight: 900; letter-spacing:-1px;">{v_sig}</h1>
+                <div style="font-size:1.5rem; color:{v_col}; font-weight:800; margin-bottom:10px;">Confidence: {v_conf:.1%}</div>
                 <div style="font-size:1.1rem; color:#f8fafc; font-weight:600;">{v_desc}</div>
                 <div style="background:rgba(0,0,0,0.2); padding:15px; border-radius:12px; border:1px dashed rgba(255,255,255,0.1); margin-top:20px; text-align:left; color:#cbd5e1; font-size:0.95rem;">
                     <b>💡 Reason News:</b> {reason_news}
