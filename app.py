@@ -390,18 +390,43 @@ st.markdown("""
 .recent-item .chg-down { font-size: 0.75rem; color: #ef4444; font-weight: 600; }
 
 /* Section Headers */
-.section-head { font-size: 1.1rem; font-weight: 700; color: #e2e8f0; margin: 1.2rem 0 0.6rem 0; }
+.section-head {
+    font-size: 1.1rem; font-weight: 800; color: #f8fafc;
+    margin: 2rem 0 1rem 0; border-left: 5px solid #667eea;
+    padding-left: 12px; letter-spacing: -0.02em;
+}
 
 /* Signal Cards */
 .signal-buy { background: linear-gradient(135deg, #00b386, #10b981); color: white; padding: 1.2rem; border-radius: 14px; text-align: center; font-size: 1.2rem; font-weight: 700; box-shadow: 0 6px 24px rgba(0,179,134,0.3); }
 .signal-sell { background: linear-gradient(135deg, #eb5b3c, #ef4444); color: white; padding: 1.2rem; border-radius: 14px; text-align: center; font-size: 1.2rem; font-weight: 700; box-shadow: 0 6px 24px rgba(235,91,60,0.3); }
 .signal-hold { background: linear-gradient(135deg, #d97706, #f59e0b); color: white; padding: 1.2rem; border-radius: 14px; text-align: center; font-size: 1.2rem; font-weight: 700; box-shadow: 0 6px 24px rgba(245,158,11,0.3); }
 
-/* News Card */
-.news-card { background: #1e293b; border-left: 4px solid #667eea; padding: 0.8rem 1rem; border-radius: 0 10px 10px 0; margin: 0.4rem 0; color: #e2e8f0; font-size: 0.9rem; }
-.sentiment-pos { color: #10b981; font-weight: 700; }
-.sentiment-neg { color: #ef4444; font-weight: 700; }
-.sentiment-neu { color: #94a3b8; font-weight: 600; }
+/* News Card (MoneyControl Style) */
+.news-card {
+    background: #0f172a; border: 1px solid #1e293b;
+    padding: 0.75rem 1.25rem; border-radius: 8px; margin-bottom: 0.5rem;
+    transition: all 0.2s; cursor: pointer;
+    display: flex; align-items: center; gap: 10px;
+}
+.news-card:hover { background: #1e293b; border-color: #334155; }
+.sentiment-pos { color: #2ecc71; font-weight: 800; font-family: 'monospace'; }
+.sentiment-neg { color: #e74c3c; font-weight: 800; font-family: 'monospace'; }
+.sentiment-neu { color: #94a3b8; font-weight: 800; font-family: 'monospace'; }
+.news-title { color: #f8fafc; font-size: 0.95rem; font-weight: 500; text-decoration: none; }
+.news-title:hover { color: #38bdf8; }
+
+/* Pattern Inset Layout */
+.pattern-inset {
+    background: rgba(30, 41, 59, 0.4);
+    border: 1px solid #1e293b;
+    padding: 15px;
+    border-radius: 12px;
+    margin-top: -10px;
+    margin-bottom: 25px;
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+}
 
 /* Index mini card */
 .idx-card { background: #0f172a; border: 1px solid #1e293b; padding: 0.8rem; border-radius: 10px; margin: 0.3rem 0; }
@@ -441,6 +466,16 @@ st.markdown("""
     70% { transform: scale(1.05); box-shadow: 0 0 0 12px rgba(239,68,68, 0); }
     100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239,68,68, 0); }
 }
+/* Market Sentiment Bar */
+.sentiment-bar {
+    background: #1e293b; border: 1px solid #334155; padding: 12px 20px;
+    border-radius: 12px; margin-bottom: 1.5rem; display: flex;
+    justify-content: space-between; align-items: center;
+    border-left: 6px solid #667eea;
+}
+.sent-label { font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; font-weight: 700; }
+.sent-value { font-size: 1.1rem; font-weight: 800; margin-top: 2px; }
+.sent-reason { font-size: 0.9rem; color: #e2e8f0; font-weight: 500; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -718,6 +753,16 @@ POS_WORDS = ['rally','gain','surge','bullish','record','high','jump','soar','bea
 NEG_WORDS = ['fall','drop','crash','bearish','low','plunge','miss','sell','downgrade',
              'loss','decline','weak','cut','fear','risk','slump','down','tank','tumble']
 
+# Catalyst Categories (Expanded for better 'Reasoning')
+CATALYSTS = {
+    'Earnings & Growth': ['dividend', 'earnings', 'profit', 'revenue', 'income', 'growth', 'beat', 'margin', 'sales', 'eps', 'guidance', 'upside'],
+    'Deals & Orders': ['merger', 'acquisition', 'deal', 'partnership', 'contract', 'order', 'agreement', 'tender', 'jv', 'outperform', 'collaboration'],
+    'Policy & Govt': ['policy', 'regulation', 'tax', 'hike', 'cut', 'budget', 'rbi', 'sebi', 'government', 'fed', 'interest', 'reserve', 'subsidy'],
+    'Market Risk': ['loss', 'debt', 'default', 'scam', 'fraud', 'investigation', 'penalty', 'crisis', 'downgrade', 'fii-selling', 'inflation', 'war', 'geopolitical'],
+    'Technical Breakout': ['breakout', 'support', 'resistance', 'moving-average', 'ema', 'rsi', 'oversold', 'overbought', 'crossover', 'momentum', 'volume-spike', 'bullish-pattern'],
+    'Corporate Action': ['bonus', 'split', 'buyback', 'rights-issue', 'listing', 'ipo', 'management-change', 'ceo', 'board-approval']
+}
+
 def score_headline(text):
     t = text.lower()
     return sum(1 for w in POS_WORDS if w in t) - sum(1 for w in NEG_WORDS if w in t)
@@ -752,16 +797,80 @@ def analyze_live_candle(df):
     return {"bias": bias, "color": color, "desc": desc, "pct": pct_from_open}
 
 def analyze_news(headlines):
-    if not headlines: return 0.0, []
+    if not headlines: return 0.0, [], "Technical Momentum (No News Data)"
     scored = []
+    cat_counts = {k: 0 for k in CATALYSTS.keys()}
+    best_h = None
+    max_cat_match = -1
+    
+    # Filter headlines: Prioritize factual statements over speculative questions
     for h in headlines:
         title = h.get('title', '') if isinstance(h, dict) else str(h)
+        # Skip purely speculative headlines if they are too short or just a single question
+        if title.endswith('?') and len(title.split()) < 5: continue
+        
         sc = score_headline(title)
+        t_low = title.lower()
+        
+        # Identify Catalysts
+        found_cats = []
+        for cat, keywords in CATALYSTS.items():
+            matches = sum(1 for k in keywords if k in t_low)
+            if matches > 0:
+                cat_counts[cat] += 1
+                found_cats.append(cat)
+                if matches > max_cat_match:
+                    max_cat_match = matches
+                    best_h = title
+        
         label = 'positive' if sc > 0 else 'negative' if sc < 0 else 'neutral'
-        entry = {**(h if isinstance(h, dict) else {'title': title}), 'score': sc, 'label': label}
+        entry = {**(h if isinstance(h, dict) else {'title': title}), 'score': sc, 'label': label, 'catalysts': found_cats}
         scored.append(entry)
+    
+    if not scored: return 0.0, [], "Technical Indicator dominance"
+    
     avg = sum(s['score'] for s in scored) / len(scored)
-    return round(avg, 3), scored
+    
+    # Identify Primary Catalyst & Build Descriptive Reason (Reason News)
+    top_cat = max(cat_counts, key=cat_counts.get) if any(cat_counts.values()) else "Broad Market Trends"
+    
+    prefix = ""
+    if top_cat == "Earnings & Growth": prefix = "Robust Corporate Earnings" if avg > 0 else "Weak Earnings Performance"
+    elif top_cat == "Deals & Orders": prefix = "Strategic New Contracts or Acquisitions" if avg > 0 else "Cancelled Deals or Orders"
+    elif top_cat == "Policy & Govt": prefix = "Positive Regulatory Support" if avg > 0 else "Regulatory Headwinds"
+    elif top_cat == "Market Risk": prefix = "Macro Stability" if avg > 0 else "Heightened Market Risk"
+    elif top_cat == "Technical Breakout": prefix = "Technical Breakout" if avg > 0 else "Technical Breakdown"
+    elif top_cat == "Corporate Action": prefix = "Positive Corporate Action" if avg > 0 else "Internal Governance Scrutiny"
+    else: prefix = "Bullish Sentiment" if avg > 0 else "Bearish Sentiment" if avg < 0 else "Market Dynamics"
+
+    # Append direct headline reason if available
+    h_snippet = f': "{best_h[:75]}..."' if best_h else ""
+    primary = f"{prefix}{h_snippet}"
+    
+    return round(avg, 3), scored, primary
+
+def get_stock_catalyst(symbol):
+    """Wrapper to get a single catalyst string for UI display"""
+    try:
+        news = fetch_market_news(f"{symbol} share news")
+        if not news: return "Market Dynamics"
+        _, _, primary = analyze_news(news)
+        return primary
+    except:
+        return "Broad Market Trends"
+
+@st.cache_data(ttl=900)
+def get_global_market_sentiment():
+    """Analyze overall sentiment for the Indian Market"""
+    try:
+        news = fetch_market_news("Indian stock market Nifty Sensex today trends news")
+        score, scored_news, catalyst = analyze_news(news)
+        if score > 0.15: label, color = "POSITIVE 📈", "#10b981"
+        elif score < -0.15: label, color = "NEGATIVE 📉", "#ef4444"
+        else: label, color = "NEUTRAL ⚖️", "#94a3b8"
+        return {"label": label, "color": color, "reason": catalyst, "score": score, "headlines": scored_news[:3]}
+    except:
+        return {"label": "NEUTRAL ⚖️", "color": "#94a3b8", "reason": "Market Dynamics", "score": 0.0, "headlines": []}
 
 
 # ── TradingView Data Source ──────────────────────────────────────────────
@@ -1157,6 +1266,33 @@ def main():
             </script>
         """, unsafe_allow_html=True)
 
+    # ── Global Market Sentiment Bar ───────────────────────────────────
+    msent = get_global_market_sentiment()
+    with st.container():
+        st.markdown(f'''
+            <div class="sentiment-bar" style="border-left-color: {msent["color"]}; margin-bottom: 5px;">
+                <div>
+                    <div class="sent-label">Global Market Sentiment</div>
+                    <div class="sent-value" style="color: {msent["color"]};">{msent["label"]}</div>
+                </div>
+                <div style="text-align: right; flex: 1; margin-left: 20px;">
+                    <div class="sent-label">AI Market Reason</div>
+                    <div class="sent-reason">"{msent["reason"]}"</div>
+                </div>
+            </div>
+        ''', unsafe_allow_html=True)
+        
+        if msent["headlines"]:
+                    # Set expanded=True so it's visible by default as requested
+            with st.expander("📄 View AI Evidence (Latest Market Headlines)", expanded=True):
+                for h in msent["headlines"]:
+                    scls = {'positive':'sentiment-pos','negative':'sentiment-neg'}.get(h['label'],'sentiment-neu')
+                    st.markdown(f'''<div class="news-card">
+                        <span class="{scls}">[{h["label"].upper()}]</span>
+                        <div class="news-title">{h["title"]}</div>
+                    </div>''', unsafe_allow_html=True)
+        st.markdown('<br>', unsafe_allow_html=True)
+
     ticker_html = '<div class="ticker-bar">'
     for ts in ticker_syms:
         info = get_price_info(ts, 5)
@@ -1174,8 +1310,8 @@ def main():
         st.markdown("### 🧠 AI Predictor Pro")
         page = st.radio("Navigate", [
             "🏠 Explore", "🔮 AI Prediction", "🔍 Stock Screener", "📰 Market News",
-            "📊 All Stocks", "🏆 Top Movers", "📈 Sector View"
-        ])
+            "📊 All Stocks", "🏆 Top Movers", "🔍 Explore Sectors"
+        ], key="page")
         st.markdown("---")
         st.caption("**Data Sources**")
         st.caption("✅ Yahoo Finance Live")
@@ -1197,7 +1333,7 @@ def main():
         page_all_stocks()
     elif page == "🏆 Top Movers":
         page_top_movers()
-    elif page == "📈 Sector View":
+    elif page == "🔍 Explore Sectors":
         page_sector_view()
 
     st.markdown("---")
@@ -1270,6 +1406,7 @@ def page_explore():
             color = "#10b981" if "BUY" in ut_s else "#ef4444"
             pulse_class = "pulse-green" if "BUY" in ut_s else "pulse-red"
             with pulse_cols[i]:
+                catalyst = get_stock_catalyst(psym)
                 st.markdown(f"""<div class="stock-card" style="border-left: 4px solid {color}; overflow: hidden;">
                     <div style="display:flex; justify-content:space-between;">
                         <div class="name">{psym}</div>
@@ -1277,6 +1414,9 @@ def page_explore():
                     </div>
                     <div style="font-size:0.8rem; color:{color}; font-weight:700">{pat['pattern']}</div>
                     <div style="font-size:0.75rem; color:{color}; opacity:0.8">UT Bot: {ut_s}</div>
+                    <div style="font-size:0.7rem; color:#94a3b8; border-top:1px solid #334155; margin-top:8px; padding-top:4px;">
+                        🔍 {catalyst}
+                    </div>
                 </div>""", unsafe_allow_html=True)
 
     # Most Traded (top 4 cards)
@@ -1288,10 +1428,14 @@ def page_explore():
         if info:
             cls = 'change-up' if info['change'] >= 0 else 'change-down'
             with cols[i]:
+                catalyst = get_stock_catalyst(sym)
                 st.markdown(f"""<div class="stock-card">
                     <div class="name">{sym}</div>
                     <div class="price">{info['currency']}{info['price']:,.2f}</div>
                     <div class="{cls}">{info['change']:+.2f} ({info['pct']:+.2f}%)</div>
+                    <div style="font-size:0.65rem; color:#94a3b8; margin-top:6px; font-style:italic">
+                         "{catalyst}"
+                    </div>
                 </div>""", unsafe_allow_html=True)
 
     # Top Movers Table (Gainers)
@@ -1322,14 +1466,25 @@ def page_explore():
             else:
                 st.info("No gainers found")
 
-        with tab2:
-            if losers:
-                ldf = pd.DataFrame([{'Company': l['symbol'], f'Price': f"{l['currency']}{l['price']:,.2f}",
-                    'Change': f"{l['change']:+.2f}", 'Change%': f"{l['pct']:+.2f}%",
-                    'Volume': f"{l['volume']:,}"} for l in losers])
-                st.dataframe(ldf, use_container_width=True, hide_index=True)
+    # NEW: Sector Discovery Link
+    st.markdown('<br>', unsafe_allow_html=True)
+    if st.button("🔍 Explore All Market Sectors", use_container_width=True):
+        st.session_state.page = "🔍 Explore Sectors"
+        st.rerun()
+
+    if movers_data:
+        tab1, tab2, tab3 = st.tabs(["🟢 Gainers", "🔴 Losers", "📊 All"])
+        gainers = sorted([m for m in movers_data if m['pct'] > 0], key=lambda x: -x['pct'])
+        losers = sorted([m for m in movers_data if m['pct'] < 0], key=lambda x: x['pct'])
+
+        with tab1:
+            if gainers:
+                gdf = pd.DataFrame([{'Company': g['symbol'], f'Price': f"{g['currency']}{g['price']:,.2f}",
+                    'Change': f"{g['change']:+.2f}", 'Change%': f"{g['pct']:+.2f}%",
+                    'Volume': f"{g['volume']:,}"} for g in gainers])
+                st.dataframe(gdf, use_container_width=True, hide_index=True)
             else:
-                st.info("No losers found")
+                st.info("No gainers found")
 
         with tab3:
             adf = pd.DataFrame([{'Company': m['symbol'], f'Price': f"{m['currency']}{m['price']:,.2f}",
@@ -1404,7 +1559,9 @@ def page_prediction():
                 with st.spinner("📰 Analyzing news..."): 
                     news = fetch_market_news(f"{symbol} share stock market news")
                     if not news: news = fetch_market_news("Indian Stock Market Latest News")
-                    sent, _ = analyze_news(news)
+                    sent, scored_news, primary_cat = analyze_news(news)
+                    st.session_state.pred_catalyst = primary_cat
+                    st.session_state.pred_news_headlines = scored_news[:3] # Save for UI
 
                 with st.spinner("🧠 Training Engine..."):
                     metrics = st.session_state.engine.train(symbol, prices, volumes, sent)
@@ -1426,12 +1583,12 @@ def page_prediction():
         pred = st.session_state.pred_results
         symbol = st.session_state.last_sym
         is_intra = "Intraday" in st.session_state.get('last_mode','')
+        headlines = st.session_state.get('pred_news_headlines', [])
         
+        # 1. LIVE HEADER CARD (Properly Aligned)
         live_price = get_realtime_price(symbol, mapped)
         is_indian = mapped.endswith('.NS') or mapped.endswith('.BO') or mapped.startswith('^')
-        us_stocks = {'AAPL', 'GOOGL', 'MSFT', 'AMZN', 'TSLA', 'NVDA', 'META', 'NFLX', 'AMD', 'INTC', 'CRM', 'ORCL', 'UBER', 'SNAP', 'COIN', 'PLTR', 'DIS', 'BA', 'JPM', 'V', 'MA', 'KO', 'PEP', 'WMT', 'PG', 'JNJ'}
-        is_us = any(mapped.startswith(u) for u in us_stocks)
-        curr = '₹' if (is_indian or not is_us) else '$'
+        curr = '₹' if is_indian else '$'
         
         if live_price:
             prev = df.iloc[-1]['Close'] if not df.empty else live_price
@@ -1439,87 +1596,118 @@ def page_prediction():
             ut_s = "BUY 🚀" if live_price > df.iloc[-1]['UT_Trail'] else "SELL 💥"
             ut_color = "#00b386" if "BUY" in ut_s else "#ef4444"
             
-            st.markdown(f"""<div class="stock-card" style="padding:1.5rem; border-right: 10px solid {ut_color}">
-                <div style="display:flex; justify-content:space-between; align-items:center">
-                    <div><div class="name">📊 {symbol} ({mapped})</div><div class="price" style="font-size:2.2rem">{curr}{live_price:,.2f}</div>
-                    <div class="{'change-up' if chg>=0 else 'change-down'}">{'▲' if chg>=0 else '▼'} {chg:+,.2f} ({pct:+.2f}%)</div></div>
-                    <div style="text-align:right"><div style="font-size:0.7rem; color:#94a3b8; text-transform:uppercase">UT Bot Signal</div>
-                    <div style="font-size:1.6rem; color:{ut_color}; font-weight:900">{ut_s}</div></div>
-                </div></div>""", unsafe_allow_html=True)
+            st.markdown(f"""
+                <div class="stock-card" style="padding:1.5rem; border-right: 12px solid {ut_color};">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <div>
+                            <div style="font-size:0.8rem; color:#94a3b8; text-transform:uppercase; font-weight:700;">Live Asset Analysis</div>
+                            <div class="name" style="font-size:1.8rem;">{symbol} <span style="font-size:0.9rem; color:#64748b;">({mapped})</span></div>
+                            <div class="price" style="font-size:2.5rem; font-weight:900;">{curr}{live_price:,.2f}</div>
+                            <div class="{'change-up' if chg>=0 else 'change-down'}" style="font-size:1.1rem; font-weight:700;">
+                                {'▲' if chg>=0 else '▼'} {chg:+,.2f} ({pct:+.2f}%)
+                            </div>
+                        </div>
+                        <div style="text-align:right;">
+                            <div style="font-size:0.75rem; color:#94a3b8; text-transform:uppercase; font-weight:800;">UT Bot Intelligence</div>
+                            <div style="font-size:2rem; color:{ut_color}; font-weight:950;">{ut_s}</div>
+                        </div>
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
 
+        # 2. ANALYSIS TABS
         st.markdown('<div class="section-head">📺 Live Analytics Dashboard</div>', unsafe_allow_html=True)
-        tv_tabs = st.tabs(["📊 Radar Chart", "🤖 AI Analytics", "🏛️ Details"])
-        with tv_tabs[0]: st.components.v1.html(build_tradingview_chart(symbol, mapped), height=600 if is_intra else 800)
-        with tv_tabs[1]:
+        tab_chart, tab_ai, tab_profile = st.tabs(["📊 Advanced Chart", "🤖 Intelligence Pulse", "🏛️ Stock Profile"])
+        with tab_chart: st.components.v1.html(build_tradingview_chart(symbol, mapped), height=650)
+        with tab_ai:
             sc1, sc2 = st.columns(2)
             with sc1: st.components.v1.html(build_tradingview_analysis(symbol, mapped), height=450)
-            with sc2: st.plotly_chart(build_gauge(pred['today']['up_prob'], pred['today']['signal'], "AI Strength"), use_container_width=True)
-        with tv_tabs[2]:
-            st.components.v1.html(build_tradingview_profile_widget(symbol, mapped), height=400)
+            with sc2: st.plotly_chart(build_gauge(pred['today']['up_prob'], pred['today']['signal'], "AI Signal Strength"), use_container_width=True)
+        with tab_profile: st.components.v1.html(build_tradingview_profile_widget(symbol, mapped), height=400)
 
-        st.markdown('<div class="section-head">🎯 AI Signal Forecast</div>', unsafe_allow_html=True)
-        st.markdown('<div class="forecast-container">', unsafe_allow_html=True)
+        # 3. AI FORECAST DASHBOARD (Cleanly Aligned 3-Day Projection)
+        st.markdown('<div class="section-head">🎯 AI Signal Forecast (3-Day Price Projection)</div>', unsafe_allow_html=True)
         tc1, tc2, tc3 = st.columns(3)
         sig_cls = {'BUY': 'signal-buy', 'SELL': 'signal-sell', 'HOLD': 'signal-hold'}
         sig_emoji = {'BUY': '🚀 BUY', 'SELL': '💥 SELL', 'HOLD': '⚖️ HOLD'}
-        with tc1: st.markdown(f'<div class="{sig_cls[pred["today"]["signal"]]}">CURRENT<br><span style="font-size:1.4rem;">{sig_emoji[pred["today"]["signal"]]}</span><p style="font-size:0.7rem">Conf: {pred["today"]["confidence"]:.1%}</p></div>', unsafe_allow_html=True)
-        with tc2: st.markdown(f'<div class="{sig_cls[pred["tomorrow"]["signal"]]}">SHORT TERM<br><span style="font-size:1.4rem;">{sig_emoji[pred["tomorrow"]["signal"]]}</span><p style="font-size:0.7rem">Conf: {pred["tomorrow"]["confidence"]:.1%}</p></div>', unsafe_allow_html=True)
-        with tc3: st.markdown(f'<div class="{sig_cls[pred["day_after"]["signal"]]}">NEAR TERM<br><span style="font-size:1.4rem;">{sig_emoji[pred["day_after"]["signal"]]}</span><p style="font-size:0.7rem">Conf: {pred["day_after"]["confidence"]:.1%}</p></div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-        st.markdown("### 📊 Market Pulse & Patterns")
-        st.plotly_chart(build_candle_chart(df.tail(60), symbol), use_container_width=True)
+        l1, l2, l3 = ("15 MIN", "30 MIN", "1 HOUR") if is_intra else ("TODAY", "TOMORROW", "DAY AFTER")
         
-        st.markdown('<div class="forecast-container">', unsafe_allow_html=True)
-        ac1, ac2 = st.columns(2)
+        with tc1: st.markdown(f'<div class="{sig_cls[pred["today"]["signal"]]}">{l1}<br><span style="font-size:1.5rem;">{sig_emoji[pred["today"]["signal"]]}</span><p style="font-size:0.75rem">Conf: {pred["today"]["confidence"]:.1%}</p></div>', unsafe_allow_html=True)
+        with tc2: st.markdown(f'<div class="{sig_cls[pred["tomorrow"]["signal"]]}">{l2}<br><span style="font-size:1.5rem;">{sig_emoji[pred["tomorrow"]["signal"]]}</span><p style="font-size:0.75rem">Conf: {pred["tomorrow"]["confidence"]:.1%}</p></div>', unsafe_allow_html=True)
+        with tc3: st.markdown(f'<div class="{sig_cls[pred["day_after"]["signal"]]}">{l3}<br><span style="font-size:1.5rem;">{sig_emoji[pred["day_after"]["signal"]]}</span><p style="font-size:0.75rem">Conf: {pred["day_after"]["confidence"]:.1%}</p></div>', unsafe_allow_html=True)
+
+        # 4. EXECUTIVE REASONING SECTION (News Catalysts)
+        st.markdown('<div class="section-head">🧠 AI Sentiment News Catalyst</div>', unsafe_allow_html=True)
+        if headlines:
+            for h in headlines:
+                scls = {'positive':'sentiment-pos','negative':'sentiment-neg'}.get(h['label'],'sentiment-neu')
+                st.markdown(f'''<div class="news-card">
+                    <span class="{scls}">[{h["label"].upper()}]</span>
+                    <div class="news-title">{h["title"]}</div>
+                </div>''', unsafe_allow_html=True)
+        else:
+            st.info("No fresh news sentiment detected.")
+
+        # 5. CANDLE CHART
+        st.markdown('<div class="section-head">📊 Market Pulse & Patterns</div>', unsafe_allow_html=True)
+        st.plotly_chart(build_candle_chart(df.tail(60), symbol), use_container_width=True)
+
+        # 6. TECHNICAL PATTERN INSET (Arranged Under the Chart)
         res = detect_candle_pattern(df.tail(3)); live_res = analyze_live_candle(df)
         p_cls = "pulse-green" if "UP" in live_res["bias"] else "pulse-red" if "DOWN" in live_res["bias"] else ""
-        with ac1:
-            st.markdown(f'''<div style="background:#1e293b; color:#e2e8f0; padding:15px; border-radius:10px; border:1px solid #334155; height:200px; text-align:center;">
-                <h4 style="margin:0; font-size:0.8rem; color:#94a3b8;">LIVE CANDLE</h4>
-                <div class="{p_cls}" style="margin-top:10px;">{live_res["bias"]}</div>
-                <div style="font-size:1.5rem; font-weight:800; color:{live_res["color"]};">{live_res["pct"]:+.2f}%</div>
-                <div style="font-size:0.8rem; color:#94a3b8;">{live_res["desc"]}</div></div>''', unsafe_allow_html=True)
-        with ac2:
-            st.markdown(f'''<div style="background:#1e293b; color:#e2e8f0; padding:15px; border-radius:10px; border:1px solid #334155; height:200px;">
-                <h4 style="margin:0; font-size:0.8rem; color:#94a3b8;">PATTERN</h4>
-                <b>{res["pattern"]}</b><br><span style="font-size:0.85rem; color:#94a3b8;">{res["advice"]}</span></div>''', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+        
+        st.markdown(f'''
+            <div class="pattern-inset">
+                <div style="text-align:center; flex:1;">
+                    <div style="font-size:0.7rem; color:#94a3b8; text-transform:uppercase;">Trend</div>
+                    <div class="{p_cls}" style="margin:5px 0; font-size:0.85rem;">{live_res["bias"]}</div>
+                    <div style="font-size:1.1rem; font-weight:900; color:{live_res["color"]};">{live_res["pct"]:+.2f}%</div>
+                </div>
+                <div style="width:1px; height:40px; background:#334155;"></div>
+                <div style="text-align:center; flex:2; padding: 0 15px;">
+                    <div style="font-size:0.75rem; color:#94a3b8; text-transform:uppercase; font-weight:700;">Candlestick Analysis</div>
+                    <div style="font-size:1rem; font-weight:800; color:#f8fafc; margin-top:4px;">{res["pattern"]}</div>
+                    <div style="font-size:0.75rem; color:#94a3b8;">{res["advice"]}</div>
+                </div>
+                <div style="width:1px; height:40px; background:#334155;"></div>
+                <div style="text-align:center; flex:1;">
+                    <div style="font-size:0.7rem; color:#94a3b8; text-transform:uppercase;">Volume Signal</div>
+                    <div style="font-size:0.95rem; font-weight:700; color:{'#10b981' if df.iloc[-1]['Volume'] > df['Volume'].tail(20).mean() * 1.5 else '#cbd5e1'}; margin-top:5px;">
+                        {'SPIKING ⚡' if df.iloc[-1]['Volume'] > df['Volume'].tail(20).mean() * 1.5 else 'NORMAL'}
+                    </div>
+                </div>
+            </div>
+        ''', unsafe_allow_html=True)
 
-        # -- Verdict Engine --
-        ai_s = pred["today"]["signal"]
-        ut_s = "BUY" if df.iloc[-1]['Close'] > df.iloc[-1]['UT_Trail'] else "SELL"
-        tv_b = pred['today']['tv_bias']
-        news_b = pred['today']['news_bias']
+        # 7. SUPREME MASTER VERDICT (The Final Consolidated Decision)
+        st.markdown('<br><hr><br>', unsafe_allow_html=True)
         
-        ai_pts = 4.5 if ai_s == 'BUY' else -4.5 if ai_s == 'SELL' else 0
-        tv_pts = 2.5 if tv_b > 0.05 else -2.5 if tv_b < -0.05 else 0
-        ut_pts = 2.0 if ut_s == "BUY" else -2.0
-        news_pts = 2.0 if news_b > 0.05 else -2.0 if news_b < -0.05 else 0
+        # Weighted Scoring
+        ai_s = pred['today']['signal']
+        tv_s = "BUY" if fetch_tv_sentiment(symbol, mapped) > 0.1 else "SELL" if fetch_tv_sentiment(symbol, mapped) < -0.1 else "NEUTRAL"
+        pat_s = "BULLISH" if ("UP" in live_res["bias"] or "Bullish" in res["pattern"]) else "BEARISH" if ("DOWN" in live_res["bias"] or "Bearish" in res["pattern"]) else "NEUTRAL"
+        sent_s = "BULLISH" if sum([1 for h in headlines if h['label']=='positive']) > sum([1 for h in headlines if h['label']=='negative']) else "BEARISH" if sum([1 for h in headlines if h['label']=='positive']) < sum([1 for h in headlines if h['label']=='negative']) else "NEUTRAL"
         
-        score = ai_pts + tv_pts + ut_pts + news_pts
-        up_c = sum([1 for p in [ai_pts, tv_pts, ut_pts, news_pts] if p > 0])
-        dn_c = sum([1 for p in [ai_pts, tv_pts, ut_pts, news_pts] if p < 0])
-        ag_pct = (max(up_c, dn_c) / 4)
+        v_pts = (4 if ai_s=='BUY' else -4 if ai_s=='SELL' else 0) + (2 if tv_s=='BUY' else -2 if tv_s=='SELL' else 0) + (1.5 if pat_s=='BULLISH' else -1.5 if pat_s=='BEARISH' else 0) + (1.5 if sent_s=='BULLISH' else -1.5 if sent_s=='BEARISH' else 0)
         
-        AGREE_MIN = 0.60 if is_intra else 0.75
-        SCORE_MIN = 3.5 if is_intra else 6.0
-        
-        v_title = "Intraday Scalper Verdict" if is_intra else "Supreme Intelligence Verdict"
-        if score >= SCORE_MIN and ag_pct >= AGREE_MIN: f_sig, f_col, f_desc = "STRONG BUY 🚀", "#00b386", "High conviction technical setup confirmed."
-        elif score >= 2.5 and ag_pct >= 0.50: f_sig, f_col, f_desc = "BUY 📈", "#10b981", "Bullish bias detected."
-        elif score <= -SCORE_MIN and ag_pct >= AGREE_MIN: f_sig, f_col, f_desc = "STRONG SELL 💥", "#eb5b3c", "High conviction bearish setup confirmed."
-        elif score <= -2.5 and ag_pct >= 0.50: f_sig, f_col, f_desc = "SELL 📉", "#ef4444", "Bearish momentum detected."
-        else: f_sig, f_col, f_desc = "WAIT / HOLD ⚖️", "#f59e0b", "Neutral setup or conflicting signals."
+        if v_pts >= 4: v_sig, v_col, v_desc = "POWERFUL BUY 🚀", "#00b386", "All major systems agree. High probability trend."
+        elif v_pts >= 1.5: v_sig, v_col, v_desc = "SCALP BUY 📈", "#10b981", "Bullish bias dominates momentum."
+        elif v_pts <= -4: v_sig, v_col, v_desc = "POWERFUL SELL 💥", "#eb5b3c", "Unanimous bearish signals detected."
+        elif v_pts <= -1.5: v_sig, v_col, v_desc = "SCALP SELL 📉", "#ef4444", "Bearish signals outweighing indicators."
+        else: v_sig, v_col, v_desc = "WAIT / HOLD ⚖️", "#f59e0b", "Conflicting signals. Wait for market alignment."
 
-        st.markdown(f'''<div class="verdict-container" style="background:{f_col}15; border:2px solid {f_col}; padding:30px; border-radius:20px; text-align:center; margin-top:30px; border-left: 8px solid {f_col};">
-            <div style="background:{f_col}; color:white; padding:4px 15px; border-radius:30px; display:inline-block; font-size:0.75rem; font-weight:700; text-transform:uppercase;">{v_title}</div>
-            <h1 class="verdict-h1" style="color:{f_col}; font-size:3.5rem; margin:15px 0; font-weight:900;">{f_sig}</h1>
-            <div class="verdict-desc" style="color:#e2e8f0; font-weight:600; font-size:1.2rem;">{f_desc}</div>
-            <div style="margin-top:20px; text-align:left; background:rgba(255,255,255,0.05); padding:15px; border-radius:12px;">
-                <div style="font-size:0.7rem; color:#94a3b8;">AI CONFIDENCE SUMMARY</div>
-                <div style="font-size:1.1rem; color:#e2e8f0; font-weight:800;">{pred['today']['confidence']:.1%} Probability of Trend</div>
-            </div></div>''', unsafe_allow_html=True)
+        reason_news = st.session_state.get('pred_catalyst', 'Market Momentum')
+        
+        st.markdown(f'''
+            <div style="background: {v_col}15; border: 2px solid {v_col}; padding: 35px; border-radius: 20px; text-align: center; border-left: 10px solid {v_col}; margin-bottom:30px;">
+                <div style="background:{v_col}; color:white; padding:4px 15px; border-radius:30px; display:inline-block; font-size:0.75rem; font-weight:700; text-transform:uppercase;">Supreme AI Verdict</div>
+                <h1 style="margin:10px 0; color:{v_col}; font-size: 3.5rem; font-weight: 900; letter-spacing:-1px;">{v_sig}</h1>
+                <div style="font-size:1.1rem; color:#f8fafc; font-weight:600;">{v_desc}</div>
+                <div style="background:rgba(0,0,0,0.2); padding:15px; border-radius:12px; border:1px dashed rgba(255,255,255,0.1); margin-top:20px; text-align:left; color:#cbd5e1; font-size:0.95rem;">
+                    <b>💡 Reason News:</b> {reason_news}
+                </div>
+            </div>
+        ''', unsafe_allow_html=True)
 # ── PAGE: Market News ─────────────────────────────────────────────────────
 def page_news():
     st.subheader("📰 Market News — Live Aggregation")
@@ -1530,16 +1718,17 @@ def page_news():
     st.write("")
     
     st.markdown('<div class="section-head">📰 MoneyControl & Business News</div>', unsafe_allow_html=True)
-    news = fetch_market_news("Indian Stock Market Nifty Sensex Latest News")
-    _, scored = analyze_news(news)
+    news = fetch_market_news("Today's Indian Stock Market Nifty Sensex Latest News Catalysts")
+    _, scored, _ = analyze_news(news)
     
     if scored:
         for n in scored:
             scls = {'positive':'sentiment-pos','negative':'sentiment-neg'}.get(n['label'],'sentiment-neu')
             url = n.get('url','#')
-            st.markdown(f'<div class="news-card"><span class="{scls}">[{n["label"].upper()}]</span> '
-                f'<a href="{url}" target="_blank" style="color:#e2e8f0;text-decoration:none">{n["title"]}</a></div>',
-                unsafe_allow_html=True)
+            st.markdown(f'''<div class="news-card">
+                <span class="{scls}">[{n["label"].upper()}]</span>
+                <a href="{url}" target="_blank" class="news-title">{n["title"]}</a>
+            </div>''', unsafe_allow_html=True)
     else:
         st.info("No fresh news available at the moment.")
         
@@ -1619,16 +1808,24 @@ def page_top_movers():
     with t1:
         if gainers:
             for g in gainers:
+                catalyst = get_stock_catalyst(g['symbol'])
                 st.markdown(f"""<div class="stock-card" style="display:flex;justify-content:space-between;align-items:center">
-                    <div><div class="name">{g['symbol']}</div></div>
+                    <div>
+                        <div class="name">{g['symbol']}</div>
+                        <div style="font-size:0.7rem; color:#94a3b8;">🔍 {catalyst}</div>
+                    </div>
                     <div style="text-align:right"><div class="price" style="font-size:1rem">{g['currency']}{g['price']:,.2f}</div>
                     <div class="change-up">{g['change']:+.2f} ({g['pct']:+.2f}%)</div></div>
                 </div>""", unsafe_allow_html=True)
     with t2:
         if losers:
             for l in losers:
+                catalyst = get_stock_catalyst(l['symbol'])
                 st.markdown(f"""<div class="stock-card" style="display:flex;justify-content:space-between;align-items:center">
-                    <div><div class="name">{l['symbol']}</div></div>
+                    <div>
+                        <div class="name">{l['symbol']}</div>
+                        <div style="font-size:0.7rem; color:#94a3b8;">🔍 {catalyst}</div>
+                    </div>
                     <div style="text-align:right"><div class="price" style="font-size:1rem">{l['currency']}{l['price']:,.2f}</div>
                     <div class="change-down">{l['change']:+.2f} ({l['pct']:+.2f}%)</div></div>
                 </div>""", unsafe_allow_html=True)
@@ -1758,29 +1955,16 @@ def page_screener():
             st.warning("❌ No stocks found matching these exact filters. Try loosening the criteria.")
 
 
-# ── PAGE: Sector View ────────────────────────────────────────────────────
+# ── PAGE: Explore Sectors ────────────────────────────────────────────────
 def page_sector_view():
-    st.subheader("📈 Sector-wise Performance & AI Forecast")
+    st.subheader("🔍 Explore Market Sectors")
+    st.caption("Browse stocks by category and group to discover high-growth opportunities without AI bias.")
+    
     for sector, syms in DASHBOARD_CATEGORIES.items(): 
         if sector == '🏛️ Indices': continue
-        unique_syms = list(dict.fromkeys(syms))[:5]
+        unique_syms = list(dict.fromkeys(syms))[:6]
         
-        # Calculate Sector AI Pulse
-        sector_sentiment = 0
-        signals = []
-        for s in unique_syms[:3]: # Scan top 3 for speed
-            idf, _ = fetch_stock(s, 20)
-            if idf is not None:
-                idf = calculate_ut_bot(idf)
-                bi = 1 if idf.iloc[-1]['Close'] > idf.iloc[-1]['UT_Trail'] else -1
-                signals.append(bi)
-        
-        sector_avg = sum(signals)/len(signals) if signals else 0
-        s_verdict = "BULLISH 🟢" if sector_avg > 0.3 else "BEARISH 🔴" if sector_avg < -0.3 else "NEUTRAL 🟡"
-        s_color = "#10b981" if "BULLISH" in s_verdict else "#ef4444" if "BEARISH" in s_verdict else "#94a3b8"
-
-        with st.expander(f"{sector} — AI Forecast: {s_verdict}"):
-            st.markdown(f'<div style="font-size:0.8rem; color:{s_color}; font-weight:700; margin-bottom:10px;">Sector AI Verdict: {s_verdict}</div>', unsafe_allow_html=True)
+        with st.expander(f"Explore {sector}"):
             cols = st.columns(len(unique_syms))
             for i, sym in enumerate(unique_syms):
                 info = get_price_info(sym, 5)
