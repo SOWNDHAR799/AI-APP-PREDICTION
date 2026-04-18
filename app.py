@@ -1879,13 +1879,29 @@ def page_prediction():
         # 3. AI FORECAST DASHBOARD (Cleanly Aligned 3-Day Projection)
         st.markdown('<div class="section-head">🎯 AI Signal Forecast (3-Day Price Projection)</div>', unsafe_allow_html=True)
         tc1, tc2, tc3 = st.columns(3)
-        sig_cls = {'STRONG BUY': 'signal-buy', 'BUY': 'signal-buy', 'STRONG SELL': 'signal-sell', 'SELL': 'signal-sell', 'HOLD': 'signal-hold', 'HOLD (Low Confidence)': 'signal-hold'}
-        sig_emoji = {'STRONG BUY': '🚀 STRONG BUY', 'BUY': '🚀 BUY', 'STRONG SELL': '💥 STRONG SELL', 'SELL': '💥 SELL', 'HOLD': '⚖️ HOLD', 'HOLD (Low Confidence)': '⚖️ HOLD'}
+        sig_cls = {
+            'STRONG BUY': 'signal-buy', 'BUY': 'signal-buy', 
+            'STRONG SELL': 'signal-sell', 'SELL': 'signal-sell', 
+            'HOLD': 'signal-hold', 'HOLD (Low Confidence)': 'signal-hold',
+            'HOLD (Uncertain)': 'signal-hold', 'HOLD (Ranging Market)': 'signal-hold'
+        }
+        sig_emoji = {
+            'STRONG BUY': '🚀 STRONG BUY', 'BUY': '🚀 BUY', 
+            'STRONG SELL': '💥 STRONG SELL', 'SELL': '💥 SELL', 
+            'HOLD': '⚖️ HOLD', 'HOLD (Low Confidence)': '⚖️ HOLD',
+            'HOLD (Uncertain)': '⚖️ HOLD (U)', 'HOLD (Ranging Market)': '⚖️ HOLD (R)'
+        }
         l1, l2, l3 = ("15 MIN", "30 MIN", "1 HOUR") if is_intra else ("TODAY", "TOMORROW", "DAY AFTER")
         
-        with tc1: st.markdown(f'<div class="{sig_cls[pred["today"]["signal"]]}">{l1}<br><span style="font-size:1.5rem;">{sig_emoji[pred["today"]["signal"]]}</span><p style="font-size:0.75rem">Conf: {pred["today"]["confidence"]:.1%}</p></div>', unsafe_allow_html=True)
-        with tc2: st.markdown(f'<div class="{sig_cls[pred["tomorrow"]["signal"]]}">{l2}<br><span style="font-size:1.5rem;">{sig_emoji[pred["tomorrow"]["signal"]]}</span><p style="font-size:0.75rem">Conf: {pred["tomorrow"]["confidence"]:.1%}</p></div>', unsafe_allow_html=True)
-        with tc3: st.markdown(f'<div class="{sig_cls[pred["day_after"]["signal"]]}">{l3}<br><span style="font-size:1.5rem;">{sig_emoji[pred["day_after"]["signal"]]}</span><p style="font-size:0.75rem">Conf: {pred["day_after"]["confidence"]:.1%}</p></div>', unsafe_allow_html=True)
+        with tc1: 
+            s1 = pred["today"]["signal"]
+            st.markdown(f'<div class="{sig_cls.get(s1, "signal-hold")}">{l1}<br><span style="font-size:1.5rem;">{sig_emoji.get(s1, "⚖️ HOLD")}</span><p style="font-size:0.75rem">Conf: {pred["today"]["confidence"]:.1%}</p></div>', unsafe_allow_html=True)
+        with tc2: 
+            s2 = pred["tomorrow"]["signal"]
+            st.markdown(f'<div class="{sig_cls.get(s2, "signal-hold")}">{l2}<br><span style="font-size:1.5rem;">{sig_emoji.get(s2, "⚖️ HOLD")}</span><p style="font-size:0.75rem">Conf: {pred["tomorrow"]["confidence"]:.1%}</p></div>', unsafe_allow_html=True)
+        with tc3: 
+            s3 = pred["day_after"]["signal"]
+            st.markdown(f'<div class="{sig_cls.get(s3, "signal-hold")}">{l3}<br><span style="font-size:1.5rem;">{sig_emoji.get(s3, "⚖️ HOLD")}</span><p style="font-size:0.75rem">Conf: {pred["day_after"]["confidence"]:.1%}</p></div>', unsafe_allow_html=True)
 
         # 4. EXECUTIVE REASONING SECTION (News Catalysts)
         st.markdown('<div class="section-head">🧠 AI Sentiment News Catalyst</div>', unsafe_allow_html=True)
