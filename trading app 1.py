@@ -1067,12 +1067,39 @@ def build_tradingview_market_news():
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# HELPERS
+# ══════════════════════════════════════════════════════════════════════════
+def nav_to(page):
+    st.session_state.page = page
+
+def get_market_status():
+    import datetime
+    try:
+        now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30))) # IST
+        day = now.weekday()
+        if day >= 5: # Saturday or Sunday
+            return "🔴 Market Closed (Weekend)", "#ef4444"
+        
+        # Simple Indian market hours: 9:15 AM - 3:30 PM
+        curr_time = now.time()
+        start = datetime.time(9, 15)
+        end = datetime.time(15, 30)
+        
+        if start <= curr_time <= end:
+            return "🟢 Market Open (Live)", "#10b981"
+        else:
+            return "🟡 Market Closed (After Hours)", "#f59e0b"
+    except:
+        return "⚪ Market Status Unknown", "#94a3b8"
+
+# ══════════════════════════════════════════════════════════════════════════
 # MAIN APP
 # ══════════════════════════════════════════════════════════════════════════
 def main():
-    st.markdown('<div class="main-title">🧠 AI Market Predictor Pro</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-title">Real-time BSE • NSE • MoneyControl — AI-Powered Predictions &nbsp;'
-                '<span class="live-badge">● LIVE</span></div>', unsafe_allow_html=True)
+    status_text, status_color = get_market_status()
+    st.markdown(f'<div class="main-title">🧠 AI Market Predictor Pro</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="sub-title">Real-time BSE • NSE • MoneyControl — AI-Powered Predictions &nbsp;'
+                f'<span style="background:{status_color}; color:white; padding:2px 8px; border-radius:12px; font-size:0.75rem; font-weight:700;">{status_text}</span></div>', unsafe_allow_html=True)
 
     if 'engine' not in st.session_state:
         st.session_state.engine = AIEngine()
@@ -1094,7 +1121,7 @@ def main():
         st.markdown("### 🧠 AI Predictor Pro")
         page = st.radio("Navigate", [
             "🏠 Explore", "🔮 AI Prediction", "🔍 Stock Screener", "📰 Market News",
-            "📊 All Stocks", "🏆 Top Movers", "🔍 Explore Sectors"
+            "📊 All Stocks", "🏆 Top Movers"
         ], key="page")
         st.markdown("---")
         st.caption("**Data Sources**")
@@ -1115,8 +1142,6 @@ def main():
         page_all_stocks()
     elif page == "🏆 Top Movers":
         page_top_movers()
-    elif page == "🔍 Explore Sectors":
-        page_sector_view()
 
     st.markdown("---")
     st.caption("🧠 AI Market Predictor Pro • BSE • NSE • MoneyControl")
@@ -1151,11 +1176,6 @@ def page_explore():
                     <div style="font-size:0.7rem; color:#94a3b8; margin-top:5px; border-top:1px solid #334155; padding-top:3px;">🔍 {catalyst}</div>
                 </div>""", unsafe_allow_html=True)
 
-    # NEW: Sector Discovery Link
-    st.markdown('<br>', unsafe_allow_html=True)
-    if st.button("🔍 Explore All Market Sectors", use_container_width=True):
-        st.session_state.page = "🔍 Explore Sectors"
-        st.rerun()
 
     st.markdown('<div class="section-head">🔥 Most Traded Stocks</div>', unsafe_allow_html=True)
     top4 = ['RELIANCE', 'TATASTEEL', 'SBIN', 'ADANIGREEN']
@@ -1468,25 +1488,6 @@ def page_screener():
     if st.button("🔍 Start Market Scan"):
         st.write("Scanning...") # Add full logic if needed
 
-# ── PAGE: Explore Sectors ────────────────────────────────────────────────
-def page_sector_view():
-    st.subheader("🔍 Explore Market Sectors")
-    st.caption("Browse stocks by category and group to discover high-growth opportunities.")
-    for sector, syms in DASHBOARD_CATEGORIES.items(): 
-        if sector == '🏛️ Indices': continue
-        unique_syms = list(dict.fromkeys(syms))[:6]
-        with st.expander(f"Explore {sector}"):
-            cols = st.columns(len(unique_syms))
-            for i, sym in enumerate(unique_syms):
-                info = get_price_info(sym, 5)
-                if info:
-                    cls = 'change-up' if info['change']>=0 else 'change-down'
-                    with cols[i]:
-                        st.markdown(f"""<div class="stock-card">
-                            <div class="name">{sym}</div>
-                            <div class="price" style="font-size:1rem">{info['currency']}{info['price']:,.2f}</div>
-                            <div class="{cls}">{info['pct']:+.2f}%</div>
-                        </div>""", unsafe_allow_html=True)
 
 
 if __name__ == "__main__": 

@@ -1362,12 +1362,39 @@ def build_tradingview_market_news():
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# HELPERS
+# ══════════════════════════════════════════════════════════════════════════
+def nav_to(page):
+    st.session_state.page = page
+
+def get_market_status():
+    import datetime
+    try:
+        now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30))) # IST
+        day = now.weekday()
+        if day >= 5: # Saturday or Sunday
+            return "🔴 Market Closed (Weekend)", "#ef4444"
+        
+        # Simple Indian market hours: 9:15 AM - 3:30 PM
+        curr_time = now.time()
+        start = datetime.time(9, 15)
+        end = datetime.time(15, 30)
+        
+        if start <= curr_time <= end:
+            return "🟢 Market Open (Live)", "#10b981"
+        else:
+            return "🟡 Market Closed (After Hours)", "#f59e0b"
+    except:
+        return "⚪ Market Status Unknown", "#94a3b8"
+
+# ══════════════════════════════════════════════════════════════════════════
 # MAIN APP
 # ══════════════════════════════════════════════════════════════════════════
 def main():
-    st.markdown('<div class="main-title">🧠 AI Market Predictor Pro</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-title">Real-time BSE • NSE • MoneyControl — AI-Powered Predictions &nbsp;'
-                '<span class="live-badge">● LIVE</span></div>', unsafe_allow_html=True)
+    status_text, status_color = get_market_status()
+    st.markdown(f'<div class="main-title">🧠 AI Market Predictor Pro</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="sub-title">Real-time BSE • NSE • MoneyControl — AI-Powered Predictions &nbsp;'
+                f'<span style="background:{status_color}; color:white; padding:2px 8px; border-radius:12px; font-size:0.75rem; font-weight:700;">{status_text}</span></div>', unsafe_allow_html=True)
 
     if 'engine' not in st.session_state:
         st.session_state.engine = AIEngine()
@@ -1431,7 +1458,7 @@ def main():
         st.markdown("### 🧠 AI Predictor Pro")
         page = st.radio("Navigate", [
             "🏠 Explore", "🔮 AI Prediction", "📈 AI Backtester", "🔍 Stock Screener", "📰 Market News",
-            "📊 All Stocks", "🏆 Top Movers", "🔍 Explore Sectors"
+            "📊 All Stocks", "🏆 Top Movers"
         ], key="page")
         st.markdown("---")
         st.caption("**Data Sources**")
@@ -1456,8 +1483,6 @@ def main():
         page_all_stocks()
     elif page == "🏆 Top Movers":
         page_top_movers()
-    elif page == "🔍 Explore Sectors":
-        page_sector_view()
 
     st.markdown("---")
     st.caption("🧠 AI Market Predictor Pro • BSE • NSE • MoneyControl")
@@ -1582,37 +1607,27 @@ def page_explore():
 
         with tab1:
             if gainers:
-                gdf = pd.DataFrame([{'Company': g['symbol'], f'Price': f"{g['currency']}{g['price']:,.2f}",
+                gdf = pd.DataFrame([{'Company': g['symbol'], 'Price': f"{g['currency']}{g['price']:,.2f}",
                     'Change': f"{g['change']:+.2f}", 'Change%': f"{g['pct']:+.2f}%",
                     'Volume': f"{g['volume']:,}"} for g in gainers])
                 st.dataframe(gdf, use_container_width=True, hide_index=True)
             else:
                 st.info("No gainers found")
 
-    # NEW: Sector Discovery Link
-    st.markdown('<br>', unsafe_allow_html=True)
-    if st.button("🔍 Explore All Market Sectors", use_container_width=True):
-        st.session_state.page = "🔍 Explore Sectors"
-        st.rerun()
-
-    if movers_data:
-        tab1, tab2, tab3 = st.tabs(["🟢 Gainers", "🔴 Losers", "📊 All"])
-        gainers = sorted([m for m in movers_data if m['pct'] > 0], key=lambda x: -x['pct'])
-        losers = sorted([m for m in movers_data if m['pct'] < 0], key=lambda x: x['pct'])
-
-        with tab1:
-            if gainers:
-                gdf = pd.DataFrame([{'Company': g['symbol'], f'Price': f"{g['currency']}{g['price']:,.2f}",
-                    'Change': f"{g['change']:+.2f}", 'Change%': f"{g['pct']:+.2f}%",
-                    'Volume': f"{g['volume']:,}"} for g in gainers])
-                st.dataframe(gdf, use_container_width=True, hide_index=True)
+        with tab2:
+            if losers:
+                ldf = pd.DataFrame([{'Company': l['symbol'], 'Price': f"{l['currency']}{l['price']:,.2f}",
+                    'Change': f"{l['change']:+.2f}", 'Change%': f"{l['pct']:+.2f}%",
+                    'Volume': f"{l['volume']:,}"} for l in losers])
+                st.dataframe(ldf, use_container_width=True, hide_index=True)
             else:
-                st.info("No gainers found")
+                st.info("No losers found")
 
         with tab3:
-            adf = pd.DataFrame([{'Company': m['symbol'], f'Price': f"{m['currency']}{m['price']:,.2f}",
+            adf = pd.DataFrame([{'Company': m['symbol'], 'Price': f"{m['currency']}{m['price']:,.2f}",
                 'Change': f"{m['change']:+.2f}", 'Change%': f"{m['pct']:+.2f}%"} for m in movers_data])
             st.dataframe(adf, use_container_width=True, hide_index=True)
+
 
     # Quick Links
     st.markdown('<div class="section-head">🔗 Products & Tools</div>', unsafe_allow_html=True)
@@ -2229,27 +2244,6 @@ def page_screener():
             st.warning("❌ No stocks found matching these exact filters. Try loosening the criteria.")
 
 
-# ── PAGE: Explore Sectors ────────────────────────────────────────────────
-def page_sector_view():
-    st.subheader("🔍 Explore Market Sectors")
-    st.caption("Browse stocks by category and group to discover high-growth opportunities without AI bias.")
-    
-    for sector, syms in DASHBOARD_CATEGORIES.items(): 
-        if sector == '🏛️ Indices': continue
-        unique_syms = list(dict.fromkeys(syms))[:6]
-        
-        with st.expander(f"Explore {sector}"):
-            cols = st.columns(len(unique_syms))
-            for i, sym in enumerate(unique_syms):
-                info = get_price_info(sym, 5)
-                if info:
-                    cls = 'change-up' if info['change']>=0 else 'change-down'
-                    with cols[i]:
-                        st.markdown(f"""<div class="stock-card">
-                            <div class="name">{sym}</div>
-                            <div class="price" style="font-size:1rem">{info['currency']}{info['price']:,.2f}</div>
-                            <div class="{cls}">{info['pct']:+.2f}%</div>
-                        </div>""", unsafe_allow_html=True)
 
 
 if __name__ == "__main__": 
