@@ -750,6 +750,24 @@ def fetch_market_news(query="Indian Stock Market"):
     except Exception:
         return []
 
+@st.cache_data(ttl=300)
+def fetch_global_news():
+    """Fetches global market catalysts (US Fed, Wall Street, Global Trends)"""
+    queries = ["Global stock market trends", "US Federal Reserve benchmark rates", "Wall Street news today"]
+    all_items = []
+    for q in queries:
+        try:
+            url = f'https://news.google.com/rss/search?q={urllib.parse.quote_plus(q)}&hl=en-US&gl=US&ceid=US:en'
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            u = urllib.request.urlopen(req, timeout=10)
+            tree = ET.parse(u)
+            for item in tree.findall('.//item')[:5]:
+                title = item.find('title').text or ""
+                link = item.find('link').text or ""
+                all_items.append({'title': title.split(' - ')[0], 'url': link, 'source': 'GlobalNews'})
+        except: continue
+    return all_items
+
 # ── Sentiment ─────────────────────────────────────────────────────────────
 POS_WORDS = ['rally','gain','surge','bullish','record','high','jump','soar','beat',
              'outperform','buy','upgrade','profit','growth','boom','recover','strong','rise','up']
@@ -852,6 +870,45 @@ def analyze_news(headlines):
     
     return round(avg, 3), scored, primary
 
+@st.cache_data(ttl=900)
+def get_master_market_sentiment():
+    """Combines Indian and Global sentiment for a master bias with separate headline results"""
+    # Fetch Indian News (Local)
+    local_news = fetch_market_news("Indian stock market Nifty Sensex today trends news")
+    l_score, l_scored, l_cat = analyze_news(local_news)
+    
+    # Fetch Global News
+    global_news = fetch_global_news()
+    g_score, g_scored, g_cat = analyze_news(global_news)
+    
+    master_score = (l_score * 0.6) + (g_score * 0.4)
+    
+    if master_score > 0.15: label, color = "STRONG POSITIVE 🚀", "#00b386"
+    elif master_score > 0.05: label, color = "POSITIVE 📈", "#10b981"
+    elif master_score < -0.15: label, color = "STRONG NEGATIVE 💥", "#eb5b3c"
+    elif master_score < -0.05: label, color = "NEGATIVE 📉", "#ef4444"
+    else: label, color = "NEUTRAL ⚖️", "#94a3b8"
+    
+    return {
+        "label": label, "color": color, "score": master_score, 
+        "local_reason": l_cat, "global_reason": g_cat,
+        "indian_headlines": l_scored,
+        "global_headlines": g_scored
+    }
+
+@st.cache_data(ttl=900)
+def get_global_market_sentiment():
+    """Analyze overall sentiment for the Indian Market (Legacy Wrapper)"""
+    try:
+        news = fetch_market_news("Indian stock market Nifty Sensex today trends news")
+        score, scored_news, catalyst = analyze_news(news)
+        if score > 0.15: label, color = "POSITIVE 📈", "#10b981"
+        elif score < -0.15: label, color = "NEGATIVE 📉", "#ef4444"
+        else: label, color = "NEUTRAL ⚖️", "#94a3b8"
+        return {"label": label, "color": color, "reason": catalyst, "score": score, "headlines": scored_news[:3]}
+    except:
+        return {"label": "NEUTRAL ⚖️", "color": "#94a3b8", "reason": "Market Dynamics", "score": 0.0, "headlines": []}
+
 def get_stock_catalyst(symbol):
     """Wrapper to get a single catalyst string for UI display"""
     try:
@@ -949,7 +1006,7 @@ class AIEngine:
             ema = (p * alpha) + (ema * (1 - alpha))
         return ema
 
-    def _features(self, prices, volumes, idx, lb=30):
+    def _features(self, prices, volumes, idx, lb=30, global_moms=None):
         # Increased lookback for ATR/ADX stability
         w = prices[max(0, idx-lb):idx]
         vw = volumes[max(0, idx-lb):idx]
@@ -972,7 +1029,6 @@ class AIEngine:
         macd = ema12 - ema26
         
         # 5. Trend Strength (ADX-like approx)
-        # Using directional movement count
         up_move = sum(1 for i in range(1, len(w)) if w[i] > w[i-1]) / len(w)
         adx_approx = abs(up_move - 0.5) * 2 # 0 to 1 scale
         
@@ -986,17 +1042,25 @@ class AIEngine:
         # 7. Regimes
         is_trending = 1 if adx_approx > 0.25 else 0
         
+        # 8. Global Index Momentum (New)
+        gm = global_moms[idx-1] if global_moms is not None and len(global_moms) >= idx else 0
+        
         return np.nan_to_num([
             ma5, ma10, ma20, ema9, ema21, ema_cross, 
             std20, rsi, macd, adx_approx, obv_rel, 
-            atr_approx, is_trending
+            atr_approx, is_trending, gm
         ], nan=0.0, posinf=0.0, neginf=0.0).tolist()
 
     def train(self, symbol, prices, volumes, news_sent=0.0):
-        # Check for persisted model first
-        if self.load_model():
-            if symbol in self.models:
-                return {'d1_acc': self.models[symbol]['d1']['acc'], 'd2_acc': self.models[symbol]['d2']['acc'], 'd3_acc': self.models[symbol]['d3']['acc'], 'd4_acc': self.models[symbol]['d4']['acc']}
+        # Fetch global index trends for feature correlation
+        try:
+            g_df = yf.download('^GSPC', period='1y', interval='1d', progress=False)
+            if g_df is not None and not g_df.empty:
+                g_close = g_df['Close']
+                if isinstance(g_close, pd.DataFrame): g_close = g_close.iloc[:,0]
+                g_mom = g_close.pct_change().fillna(0).tolist()
+            else: g_mom = None
+        except: g_mom = None
 
         prices = np.array(prices, dtype=float); volumes = np.array(volumes, dtype=float)
         X, y1, y2, y3, y4 = [], [], [], [], []
@@ -1006,7 +1070,7 @@ class AIEngine:
         STOP_LOSS = 0.01    # 1% Stop Loss
         
         for i in range(30, len(prices)-10):
-            f = self._features(prices, volumes, i)
+            f = self._features(prices, volumes, i, global_moms=g_mom)
             if f is None: continue
             X.append(f)
             
@@ -1080,9 +1144,19 @@ class AIEngine:
 
     def predict(self, symbol, prices, volumes, news_sent=0.0, tv_sent=0.0, intraday=False, df=None, df_1h=None, df_1d=None):
         if symbol not in self.models: return None
+        
+        # Fetch latest global momentum for prediction bias
+        try:
+            g_df = yf.download(['^GSPC', '^IXIC'], period='5d', interval='1d', progress=False)
+            if isinstance(g_df.columns, pd.MultiIndex): g_close = g_df['Close']
+            else: g_close = g_df['Close']
+            g_mean_mom = g_close.pct_change().mean(axis=1).iloc[-1]
+            g_mom_arr = [g_mean_mom] * (len(prices) + 1)
+        except: g_mean_mom = 0; g_mom_arr = None
+
         prices = np.array(prices, dtype=float); volumes = np.array(volumes, dtype=float)
         
-        f_latest = self._features(prices, volumes, len(prices))
+        f_latest = self._features(prices, volumes, len(prices), global_moms=g_mom_arr)
         if f_latest is None: return None
         Xs_latest = self.scalers[symbol].transform([f_latest])
         
@@ -1129,8 +1203,8 @@ class AIEngine:
             raw_prob = p_buy if p_buy > p_sell else p_sell
             ml_side = 1 if p_buy > p_sell else -1
             
-            # Base final score
-            final_score = (0.5 * raw_prob) + (0.5 * main_status['score'])
+            # Base final score (Inject global sentiment bias)
+            final_score = (0.4 * raw_prob) + (0.4 * main_status['score']) + (0.2 * np.clip(g_mean_mom*5 + 0.5, 0, 1))
             
             # Regime Awareness: Penalty in Ranging markets
             if not is_trending:
@@ -1400,7 +1474,7 @@ def main():
         st.session_state.engine = AIEngine()
 
     # ── Ticker Bar & Live Refresh ─────────────────────────────────────
-    ticker_syms = ['NIFTY', 'SENSEX', 'BANKNIFTY']
+    ticker_syms = ['^NSEI', '^BSESN', '^NSEBANK', '^GSPC', '^IXIC']
     lc1, lc2 = st.columns([5, 1])
     with lc2:
         live_mode = st.checkbox("📡 Live Mode", help="Auto-refreshes every 30s")
@@ -1415,30 +1489,33 @@ def main():
         """, unsafe_allow_html=True)
 
     # ── Global Market Sentiment Bar ───────────────────────────────────
-    msent = get_global_market_sentiment()
+    msent = get_master_market_sentiment()
     with st.container():
         st.markdown(f'''
             <div class="sentiment-bar" style="border-left-color: {msent["color"]}; margin-bottom: 5px;">
                 <div>
-                    <div class="sent-label">Global Market Sentiment</div>
+                    <div class="sent-label">Master Market Bias</div>
                     <div class="sent-value" style="color: {msent["color"]};">{msent["label"]}</div>
                 </div>
                 <div style="text-align: right; flex: 1; margin-left: 20px;">
-                    <div class="sent-label">AI Market Reason</div>
-                    <div class="sent-reason">"{msent["reason"]}"</div>
+                    <div class="sent-label">Global catalyst</div>
+                    <div class="sent-reason">"{msent["global_reason"]}"</div>
                 </div>
             </div>
         ''', unsafe_allow_html=True)
         
-        if msent["headlines"]:
-                    # Set expanded=True so it's visible by default as requested
-            with st.expander("📄 View AI Evidence (Latest Market Headlines)", expanded=True):
-                for h in msent["headlines"]:
+        with st.expander("📄 View AI Evidence (Market Headlines Breakdown)", expanded=False):
+            tc1, tc2 = st.columns(2)
+            with tc1:
+                st.markdown("### 🇮🇳 Indian News")
+                for h in msent["indian_headlines"][:5]:
                     scls = {'positive':'sentiment-pos','negative':'sentiment-neg'}.get(h['label'],'sentiment-neu')
-                    st.markdown(f'''<div class="news-card">
-                        <span class="{scls}">[{h["label"].upper()}]</span>
-                        <div class="news-title">{h["title"]}</div>
-                    </div>''', unsafe_allow_html=True)
+                    st.markdown(f'''<div class="news-card"><span class="{scls}">[{h["label"].upper()}]</span> {h["title"]}</div>''', unsafe_allow_html=True)
+            with tc2:
+                st.markdown("### 🌎 Global News")
+                for h in msent["global_headlines"][:5]:
+                    scls = {'positive':'sentiment-pos','negative':'sentiment-neg'}.get(h['label'],'sentiment-neu')
+                    st.markdown(f'''<div class="news-card"><span class="{scls}">[{h["label"].upper()}]</span> {h["title"]}</div>''', unsafe_allow_html=True)
         st.markdown('<br>', unsafe_allow_html=True)
 
     ticker_html = '<div class="ticker-bar">'
@@ -1784,11 +1861,14 @@ def page_prediction():
                 volumes = df_run['Volume'].dropna().astype(float).tolist()
                 
                 with st.spinner("📰 Analyzing news..."): 
-                    news = fetch_market_news(f"{symbol} share stock market news")
-                    if not news: news = fetch_market_news("Indian Stock Market Latest News")
-                    sent, scored_news, primary_cat = analyze_news(news)
-                    st.session_state.pred_catalyst = primary_cat
-                    st.session_state.pred_news_headlines = scored_news[:3]
+                    # Fetch Local and Global separately for comparison
+                    local_news = fetch_market_news(f"{symbol} share stock market news")
+                    master_sent = get_master_market_sentiment()
+                    
+                    st.session_state.pred_catalyst = master_sent['global_reason']
+                    st.session_state.pred_indian_news = analyze_news(local_news)[1][:5]
+                    st.session_state.pred_global_news = master_sent['global_headlines']
+                    sent = master_sent['score']
 
                 with st.spinner("🧠 Training Engine..."):
                     metrics = st.session_state.engine.train(symbol, prices, volumes, sent)
@@ -1918,17 +1998,21 @@ def page_prediction():
             s3 = pred["day_after"]["signal"]
             st.markdown(f'<div class="{sig_cls.get(s3, "signal-hold")}">{l3}<br><span style="font-size:1.5rem;">{sig_emoji.get(s3, "⚖️ HOLD")}</span><p style="font-size:0.75rem">Conf: {pred["day_after"]["confidence"]:.1%}</p></div>', unsafe_allow_html=True)
 
-        # 4. EXECUTIVE REASONING SECTION (News Catalysts)
-        st.markdown('<div class="section-head">🧠 AI Sentiment News Catalyst</div>', unsafe_allow_html=True)
-        if headlines:
-            for h in headlines:
+        # 4. EXECUTIVE REASONING SECTION (Separated Indian & Global News)
+        st.markdown('<div class="section-head">🧠 AI Sentiment Pulse (Local vs Global)</div>', unsafe_allow_html=True)
+        sc1, sc2 = st.columns(2)
+        with sc1:
+            st.markdown("### 🇮🇳 Indian Catalysts")
+            i_news = st.session_state.get('pred_indian_news', [])
+            for h in i_news:
                 scls = {'positive':'sentiment-pos','negative':'sentiment-neg'}.get(h['label'],'sentiment-neu')
-                st.markdown(f'''<div class="news-card">
-                    <span class="{scls}">[{h["label"].upper()}]</span>
-                    <div class="news-title">{h["title"]}</div>
-                </div>''', unsafe_allow_html=True)
-        else:
-            st.info("No fresh news sentiment detected.")
+                st.markdown(f'''<div class="news-card"><span class="{scls}">[{h["label"].upper()}]</span> {h["title"]}</div>''', unsafe_allow_html=True)
+        with sc2:
+            st.markdown("### 🌎 Global Market Drivers")
+            g_news = st.session_state.get('pred_global_news', [])
+            for h in g_news:
+                scls = {'positive':'sentiment-pos','negative':'sentiment-neg'}.get(h['label'],'sentiment-neu')
+                st.markdown(f'''<div class="news-card"><span class="{scls}">[{h["label"].upper()}]</span> {h["title"]}</div>''', unsafe_allow_html=True)
 
         # 5. CANDLE CHART
         st.markdown('<div class="section-head">📊 Market Pulse & Patterns</div>', unsafe_allow_html=True)
@@ -1999,27 +2083,50 @@ def page_prediction():
         ''', unsafe_allow_html=True)
 # ── PAGE: Market News ─────────────────────────────────────────────────────
 def page_news():
-    st.subheader("📰 Market News — Live Aggregation")
+    st.subheader("📰 Market News Hub")
     
-    # NEW: TradingView News Timeline
-    st.markdown('<div class="section-head">🔥 TradingView Market Timeline</div>', unsafe_allow_html=True)
-    st.components.v1.html(build_tradingview_market_news(), height=600)
-    st.write("")
+    # Master Global Sentiment
+    msent = get_master_market_sentiment()
+    st.markdown(f'''
+        <div class="sentiment-bar" style="border-left-color: {msent["color"]};">
+            <div>
+                <div class="sent-label">Master Market Bias</div>
+                <div class="sent-value" style="color: {msent["color"]};">{msent["label"]}</div>
+            </div>
+            <div style="text-align: right;">
+                <div class="sent-label">Global Driving Catalyst</div>
+                <div class="sent-reason">{msent["global_reason"]}</div>
+            </div>
+        </div>
+    ''', unsafe_allow_html=True)
+
+    t1, t2, t3 = st.tabs(["🌎 Global Catalysts", "🇮🇳 Indian Market", "📊 TradingView Feed"])
     
-    st.markdown('<div class="section-head">📰 MoneyControl & Business News</div>', unsafe_allow_html=True)
-    news = fetch_market_news("Today's Indian Stock Market Nifty Sensex Latest News Catalysts")
-    _, scored, _ = analyze_news(news)
-    
-    if scored:
-        for n in scored:
+    with t1:
+        st.markdown("### 🌎 Wall Street & Global News")
+        g_news = fetch_global_news()
+        _, g_scored, _ = analyze_news(g_news)
+        for n in g_scored:
             scls = {'positive':'sentiment-pos','negative':'sentiment-neg'}.get(n['label'],'sentiment-neu')
-            url = n.get('url','#')
             st.markdown(f'''<div class="news-card">
                 <span class="{scls}">[{n["label"].upper()}]</span>
-                <a href="{url}" target="_blank" class="news-title">{n["title"]}</a>
+                <a href="{n.get('url','#')}" target="_blank" class="news-title">{n["title"]}</a>
             </div>''', unsafe_allow_html=True)
-    else:
-        st.info("No fresh news available at the moment.")
+
+    with t2:
+        st.markdown("### 🇮🇳 Nifty & Sensex News")
+        news = fetch_market_news("Today's Indian Stock Market Nifty Sensex Latest News Catalysts")
+        _, scored, _ = analyze_news(news)
+        if scored:
+            for n in scored:
+                scls = {'positive':'sentiment-pos','negative':'sentiment-neg'}.get(n['label'],'sentiment-neu')
+                st.markdown(f'''<div class="news-card">
+                    <span class="{scls}">[{n["label"].upper()}]</span>
+                    <a href="{n.get('url','#')}" target="_blank" class="news-title">{n["title"]}</a>
+                </div>''', unsafe_allow_html=True)
+
+    with t3:
+        st.components.v1.html(build_tradingview_market_news(), height=600)
         
     st.markdown("---")
     st.markdown("🔗 **Direct Links to Market Exchanges:**")

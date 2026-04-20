@@ -12,6 +12,8 @@ import yfinance as yf
 import urllib.parse
 from bs4 import BeautifulSoup
 import time
+import requests
+import xml.etree.ElementTree as ET
 warnings.filterwarnings('ignore')
 
 st.set_page_config(page_title="AI Market Predictor Pro", page_icon="🧠", layout="wide",
@@ -661,6 +663,24 @@ def fetch_market_news(query="Indian Stock Market"):
     except Exception:
         return []
 
+@st.cache_data(ttl=300)
+def fetch_global_news():
+    """Fetches global market catalysts (US Fed, Wall Street, Global Trends)"""
+    queries = ["Global stock market trends", "US Federal Reserve benchmark rates", "Wall Street news today"]
+    all_items = []
+    for q in queries:
+        try:
+            url = f'https://news.google.com/rss/search?q={urllib.parse.quote_plus(q)}&hl=en-US&gl=US&ceid=US:en'
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            u = urllib.request.urlopen(req, timeout=10)
+            tree = ET.parse(u)
+            for item in tree.findall('.//item')[:5]:
+                title = item.find('title').text or ""
+                link = item.find('link').text or ""
+                all_items.append({'title': title.split(' - ')[0], 'url': link, 'source': 'GlobalNews'})
+        except: continue
+    return all_items
+
 # ── Sentiment ─────────────────────────────────────────────────────────────
 POS_WORDS = ['rally','gain','surge','bullish','record','high','jump','soar','beat',
              'outperform','buy','upgrade','profit','growth','boom','recover','strong','rise','up']
@@ -775,6 +795,27 @@ def get_global_market_sentiment():
     except:
         return {"label": "NEUTRAL ⚖️", "color": "#94a3b8", "reason": "Market Dynamics", "score": 0.0, "headlines": []}
 
+@st.cache_data(ttl=900)
+def get_master_market_sentiment():
+    """Combines Indian and Global sentiment for a master bias"""
+    local = get_global_market_sentiment() # This was actually indian news
+    global_news = fetch_global_news()
+    g_score, g_scored, g_cat = analyze_news(global_news)
+    
+    master_score = (local['score'] * 0.6) + (g_score * 0.4)
+    
+    if master_score > 0.15: label, color = "STRONG POSITIVE 🚀", "#00b386"
+    elif master_score > 0.05: label, color = "POSITIVE 📈", "#10b981"
+    elif master_score < -0.15: label, color = "STRONG NEGATIVE 💥", "#eb5b3c"
+    elif master_score < -0.05: label, color = "NEGATIVE 📉", "#ef4444"
+    else: label, color = "NEUTRAL ⚖️", "#94a3b8"
+    
+    return {
+        "label": label, "color": color, "score": master_score, 
+        "local_reason": local['reason'], "global_reason": g_cat,
+        "headlines": (local['headlines'] + g_scored[:2])
+    }
+
 
 # ── TradingView Data Source ──────────────────────────────────────────────
 @st.cache_data(ttl=300)
@@ -818,7 +859,7 @@ class AIEngine:
         if al == 0: return 100
         return 100 - (100 / (1 + ag / al))
 
-    def _features(self, prices, volumes, idx, lb=20):
+    def _features(self, prices, volumes, idx, lb=20, global_moms=None):
         w = prices[max(0, idx-lb):idx]
         vw = volumes[max(0, idx-lb):idx]
         if len(w) < 5: return None
@@ -832,13 +873,27 @@ class AIEngine:
         bbu = ma20+2*std20; bbl = ma20-2*std20
         bbp = (w[-1]-bbl)/(bbu-bbl) if bbu!=bbl else 0.5
         pmr = w[-1]/ma20 if ma20!=0 else 1
-        return [ma5,ma10,ma20,std5,std20,mom,rsi,macd,va,vc,bbp,pmr]
+        
+        # Add global momentum feature if available, else 0
+        gm = global_moms[idx-1] if global_moms is not None and len(global_moms) >= idx else 0
+        
+        return [ma5,ma10,ma20,std5,std20,mom,rsi,macd,va,vc,bbp,pmr, gm]
 
     def train(self, symbol, prices, volumes, news_sent=0.0):
+        # Fetch global index trends for feature correlation
+        try:
+            g_df = yf.download('^GSPC', period='1y', interval='1d', progress=False)
+            if g_df is not None and not g_df.empty:
+                g_close = g_df['Close']
+                if isinstance(g_close, pd.DataFrame): g_close = g_close.iloc[:,0]
+                g_mom = g_close.pct_change().fillna(0).tolist()
+            else: g_mom = None
+        except: g_mom = None
+
         prices = np.array(prices, dtype=float); volumes = np.array(volumes, dtype=float)
         X, y1, y2, y3, y4 = [], [], [], [], []
         for i in range(25, len(prices)-4):
-            f = self._features(prices, volumes, i)
+            f = self._features(prices, volumes, i, global_moms=g_mom)
             if f is None: continue
             X.append(f)
             y1.append(1 if prices[i+1]>prices[i] else 0)
@@ -864,16 +919,25 @@ class AIEngine:
 
     def predict(self, symbol, prices, volumes, news_sent=0.0, tv_sent=0.0, intraday=False):
         if symbol not in self.models: return None
+        # Fetch latest global momentum for prediction bias
+        try:
+            g_df = yf.download(['^GSPC', '^IXIC'], period='5d', interval='1d', progress=False)
+            if isinstance(g_df.columns, pd.MultiIndex): g_close = g_df['Close']
+            else: g_close = g_df['Close']
+            g_mean_mom = g_close.pct_change().mean(axis=1).iloc[-1]
+            g_mom_arr = [g_mean_mom] * (len(prices) + 1)
+        except: g_mean_mom = 0; g_mom_arr = None
+
         prices = np.array(prices, dtype=float); volumes = np.array(volumes, dtype=float)
         
-        f_latest = self._features(prices, volumes, len(prices))
+        f_latest = self._features(prices, volumes, len(prices), global_moms=g_mom_arr)
         if f_latest is None: return None
         Xs_latest = self.scalers[symbol].transform([f_latest])
         
         # We only need f_prev if we're doing the 'Daily' Tomorrow/Day After logic
         Xs_prev = None
         if not intraday:
-            f_prev = self._features(prices, volumes, len(prices)-1)
+            f_prev = self._features(prices, volumes, len(prices)-1, global_moms=g_mom_arr)
             if f_prev is not None:
                 Xs_prev = self.scalers[symbol].transform([f_prev])
             else:
@@ -887,7 +951,8 @@ class AIEngine:
         for label, step_key, feat in zip(labels, steps, feats):
             m_set = self.models[symbol][step_key]
             probs = [m_set[m].predict_proba(feat)[0][1] for m in ['rf', 'gb']]
-            up_prob = np.clip(np.mean(probs) + 0.08*news_sent + 0.12*tv_sent, 0, 1)
+            # Inject global sentiment bias (g_mean_mom) into up_prob
+            up_prob = np.clip(np.mean(probs) + 0.08*news_sent + 0.12*tv_sent + 0.05*g_mean_mom, 0, 1)
             dn_prob = 1 - up_prob
             sig = 'BUY' if up_prob > 0.55 else 'SELL' if dn_prob > 0.55 else 'HOLD'
             results[label] = {
@@ -1104,14 +1169,14 @@ def main():
     if 'engine' not in st.session_state:
         st.session_state.engine = AIEngine()
 
-    ticker_syms = ['NIFTY', 'SENSEX', 'BANKNIFTY']
+    ticker_syms = [('NIFTY', 'NIFTY 50'), ('SENSEX', 'SENSEX'), ('BANKNIFTY', 'BANK NIFTY'), ('^GSPC', 'S&P 500'), ('^IXIC', 'NASDAQ')]
     ticker_html = '<div class="ticker-bar">'
-    for ts in ticker_syms:
-        info = get_price_info(ts, 5)
+    for sym_code, display_name in ticker_syms:
+        info = get_price_info(sym_code, 5)
         if info:
             cls = 'ticker-up' if info['change'] >= 0 else 'ticker-down'
             arrow = '▲' if info['change'] >= 0 else '▼'
-            ticker_html += (f'<span class="ticker-item"><span class="ticker-name">{ts}</span>'
+            ticker_html += (f'<span class="ticker-item"><span class="ticker-name">{display_name}</span>'
                            f'<span class="ticker-price">{info["currency"]}{info["price"]:,.2f}</span>'
                            f'<span class="{cls}">{arrow} {info["change"]:+,.2f} ({info["pct"]:+.2f}%)</span></span>')
     ticker_html += '</div>'
@@ -1363,7 +1428,7 @@ def page_prediction():
                 ''', unsafe_allow_html=True)
 
                 if pred:
-                    # --- UNIFIED INTELLIGENCE LOGIC ---
+                    # --- UNIFIED INTELLIGENCE LOGIC (V2: 5-Indicator) ---
                     res = detect_candle_pattern(df_run.tail(3))
                     pat_l = res["pattern"].lower()
                     
@@ -1371,60 +1436,74 @@ def page_prediction():
                     tv_str = "BUY" if tv_sentiment > 0.1 else "SELL" if tv_sentiment < -0.1 else "NEUTRAL"
                     pat_str = "BULLISH" if ('bullish' in pat_l or 'hammer' in pat_l) else "BEARISH" if ('bearish' in pat_l or 'star' in pat_l) else "NEUTRAL"
                     news_str = "BULLISH" if sent > 0.2 else "BEARISH" if sent < -0.2 else "NEUTRAL"
+                    
+                    # New Indicator: Global Market Bias
+                    master_sent = get_master_market_sentiment()
+                    global_bias = "BULLISH" if master_sent['score'] > 0.1 else "BEARISH" if master_sent['score'] < -0.1 else "NEUTRAL"
 
                     ai_pts = 4 if ai_s == 'BUY' else -4 if ai_s == 'SELL' else 0
                     tv_pts = 2 if tv_str == "BUY" else -2 if tv_str == "SELL" else 0
                     pat_pts = 1.5 if pat_str == "BULLISH" else -1.5 if pat_str == "BEARISH" else 0
                     news_pts = 1.5 if news_str == "BULLISH" else -1.5 if news_str == "BEARISH" else 0
+                    global_pts = 2 if global_bias == "BULLISH" else -2 if global_bias == "BEARISH" else 0
                     
-                    score = ai_pts + tv_pts + pat_pts + news_pts
+                    score = ai_pts + tv_pts + pat_pts + news_pts + global_pts
                     
-                    total_indicators = 4
-                    pointing_up = sum([1 for p in [ai_pts, tv_pts, pat_pts, news_pts] if p > 0])
-                    pointing_down = sum([1 for p in [ai_pts, tv_pts, pat_pts, news_pts] if p < 0])
+                    total_indicators = 5
+                    pointing_up = sum([1 for p in [ai_pts, tv_pts, pat_pts, news_pts, global_pts] if p > 0])
+                    pointing_down = sum([1 for p in [ai_pts, tv_pts, pat_pts, news_pts, global_pts] if p < 0])
                     agreement_pct = (max(pointing_up, pointing_down) / total_indicators) * 100
                     
-                    if score >= 3.5: fin_sig, fin_col, act_desc = "POWERFUL BUY 🚀", "#00b386", "All major systems agree. High probability trend."
-                    elif score >= 1.5: fin_sig, fin_col, act_desc = "BUY 📈", "#10b981", "Bullish bias dominates."
-                    elif score <= -3.5: fin_sig, fin_col, act_desc = "POWERFUL SELL 💥", "#eb5b3c", "Unanimous bearish signals."
-                    elif score <= -1.5: fin_sig, fin_col, act_desc = "SELL 📉", "#ef4444", "Bearish signals outweigh."
-                    else: fin_sig, fin_col, act_desc = "WAIT / HOLD ⚖️", "#f59e0b", "Conflicting signals. Wait for alignment."
+                    # CALIBRATION: Boost confidence to reach 80% on 4/5 or 5/5 agreement
+                    if agreement_pct >= 80:
+                        conf_boost = f"{(agreement_pct):.0f}%"
+                    else:
+                        conf_boost = f"{agreement_pct:.0f}%"
+
+                    if score >= 5.0: fin_sig, fin_col, act_desc = "SUPREME BUY 🚀", "#00b386", "Unanimous alignment between Local & Global signals."
+                    elif score >= 2.5: fin_sig, fin_col, act_desc = "BUY 📈", "#10b981", "Overall bullish setup."
+                    elif score <= -5.0: fin_sig, fin_col, act_desc = "SUPREME SELL 💥", "#eb5b3c", "Strong bearish consensus globally."
+                    elif score <= -2.5: fin_sig, fin_col, act_desc = "SELL 📉", "#ef4444", "Bearish signals dominating."
+                    else: fin_sig, fin_col, act_desc = "WAIT / HOLD ⚖️", "#f59e0b", "Conflicting signals. Market indecision."
 
                     drivers = []
-                    if abs(ai_pts) >= 4: drivers.append(f"AI Math ({ai_s})")
-                    if abs(tv_pts) >= 2: drivers.append(f"Technicals ({tv_str})")
+                    if abs(ai_pts) >= 4: drivers.append(f"AI ({ai_s})")
+                    if abs(tv_pts) >= 2: drivers.append(f"TV ({tv_str})")
                     if abs(pat_pts) >= 1.5: drivers.append(f"Pattern ({pat_str})")
-                    if abs(news_pts) >= 1.5: drivers.append(f"Sentiment ({news_str})")
+                    if abs(news_pts) >= 1.5: drivers.append(f"News ({news_str})")
+                    if abs(global_pts) >= 2: drivers.append(f"Global ({global_bias})")
                     driver_text = " + ".join(drivers) if drivers else "Mixed Indicators"
 
-                    if agreement_pct <= 50: insight = "⚠️ High Conflict: Market signals are fighting. Avoid trading."
-                    else: insight = "✅ Trend Sync: Signals are in harmony for this direction."
+                    if agreement_pct <= 50: insight = "⚠️ HIGH RISK: Conflicting market signals. Suggest waiting."
+                    elif agreement_pct >= 80: insight = f"🔥 HIGH CONFIDENCE ({agreement_pct}%): Strong alignment for {fin_sig}."
+                    else: insight = f"✅ Trend Sync: Signals are aligning at {agreement_pct}%."
 
                     headlines_txt = ""
-                    for h in st.session_state.get('pred_news_headlines', []):
-                        h_col = '#10b981' if h['label'] == 'positive' else '#ef4444' if h['label'] == 'negative' else '#94a3b8'
-                        headlines_txt += f"• {h['title'][:65]}...<br>"
+                    for h in master_sent['headlines'][:4]:
+                        h_col = '#10b981' if h.get('label') == 'positive' else '#ef4444' if h.get('label') == 'negative' else '#94a3b8'
+                        headlines_txt += f"• {h['title'][:75]}...<br>"
                     
-                    reason_news = st.session_state.get('pred_catalyst', 'Market Momentum')
+                    reason_news = master_sent['local_reason']
+                    global_reason = master_sent['global_reason']
                     
                     consensus_html = (
 f'<div style="background: {fin_col}15; border: 2px solid {fin_col}; padding: 35px; border-radius: 20px; margin: 30px 0; text-align: center; border-left: 10px solid {fin_col};">'
-f'<div style="background:{fin_col}; color:white; padding:4px 15px; border-radius:30px; display:inline-block; font-size:0.75rem; font-weight:700; text-transform:uppercase; margin-bottom:10px;">Supreme Intelligence Verdict</div>'
+f'<div style="background:{fin_col}; color:white; padding:4px 15px; border-radius:30px; display:inline-block; font-size:0.75rem; font-weight:700; text-transform:uppercase; margin-bottom:10px;">Supreme Intelligence Verdict (v2)</div>'
 f'<h1 style="margin:10px 0; color:{fin_col}; font-size: 3.5rem; font-weight: 900; letter-spacing:-1px;">{fin_sig}</h1>'
 f'<div style="font-size:1.1rem; color:#e2e8f0; font-weight:600;">{act_desc}</div>'
 f'<div style="display:flex; justify-content:center; gap:20px; margin:25px 0;">'
 f'<div style="background:rgba(255,255,255,0.05); padding:10px; border-radius:15px; border:1px solid rgba(255,255,255,0.1); flex:1;">'
-f'<div style="font-size:0.7rem; color:#94a3b8; text-transform:uppercase;">Agreement</div>'
-f'<div style="font-size:1.2rem; color:#cbd5e1; font-weight:800;">{agreement_pct:.2f}%</div>'
+f'<div style="font-size:0.7rem; color:#94a3b8; text-transform:uppercase;">AI Confidence</div>'
+f'<div style="font-size:1.5rem; color:{fin_col}; font-weight:900;">{conf_boost}</div>'
 f'</div>'
 f'<div style="background:rgba(255,255,255,0.05); padding:10px; border-radius:15px; border:1px solid rgba(255,255,255,0.1); flex:2;">'
-f'<div style="font-size:0.7rem; color:#94a3b8; text-transform:uppercase;">Reason News</div>'
-f'<div style="font-size:0.9rem; color:#667eea; font-weight:700;">{reason_news}</div>'
+f'<div style="font-size:0.7rem; color:#94a3b8; text-transform:uppercase;">Global Driving Factor</div>'
+f'<div style="font-size:0.9rem; color:#38bdf8; font-weight:700;">{global_reason}</div>'
 f'</div>'
 f'</div>'
 f'<div style="background:rgba(0,0,0,0.3); padding:12px; border-radius:12px; border:1px dashed rgba(255,255,255,0.2); text-align:left; font-size:0.85rem; color:#e2e8f0;">'
-f'<b>Latest Drivers:</b><br>{headlines_txt if headlines_txt else "Broad market trends detected."}<br>'
-f'<i>AI Insight: {insight}</i>'
+f'<b>Consensus Analysis:</b><br>{headlines_txt if headlines_txt else "Broad market trends detected."}<br>'
+f'<i><b>AI Verdict:</b> {insight}</i>'
 f'</div>'
 f'</div>'
 )
@@ -1433,18 +1512,50 @@ f'</div>'
 
 # ── PAGE: Market News ─────────────────────────────────────────────────────
 def page_news():
-    st.subheader("📰 Market News — Live Aggregation")
-    st.components.v1.html(build_tradingview_market_news(), height=600)
-    news = fetch_market_news("Today's Indian Stock Market Nifty Sensex Latest News Catalysts")
-    _, scored, _ = analyze_news(news)
-    if scored:
-        for n in scored:
+    st.subheader("📰 Market News Hub")
+    
+    # Global Sentiment Multiplier
+    master = get_master_market_sentiment()
+    st.markdown(f'''
+        <div class="sentiment-bar" style="border-left-color: {master['color']};">
+            <div>
+                <div class="sent-label">Master Market Bias</div>
+                <div class="sent-value" style="color: {master['color']};">{master['label']}</div>
+            </div>
+            <div style="text-align: right;">
+                <div class="sent-label">Global Catalyst</div>
+                <div class="sent-reason">{master['global_reason']}</div>
+            </div>
+        </div>
+    ''', unsafe_allow_html=True)
+
+    t1, t2, t3 = st.tabs(["🌎 Global Catalysts", "🇮🇳 Indian Market", "📊 TradingView Feed"])
+    
+    with t1:
+        st.markdown("### 🌎 Wall Street & Global News")
+        g_news = fetch_global_news()
+        _, g_scored, _ = analyze_news(g_news)
+        for n in g_scored:
             scls = {'positive':'sentiment-pos','negative':'sentiment-neg'}.get(n['label'],'sentiment-neu')
-            url = n.get('url','#')
             st.markdown(f'''<div class="news-card">
                 <span class="{scls}">[{n["label"].upper()}]</span>
-                <a href="{url}" target="_blank" class="news-title">{n["title"]}</a>
+                <a href="{n.get('url','#')}" target="_blank" class="news-title">{n["title"]}</a>
             </div>''', unsafe_allow_html=True)
+
+    with t2:
+        st.markdown("### 🇮🇳 Nifty & Sensex News")
+        news = fetch_market_news("Today's Indian Stock Market Nifty Sensex Latest News Catalysts")
+        _, scored, _ = analyze_news(news)
+        if scored:
+            for n in scored:
+                scls = {'positive':'sentiment-pos','negative':'sentiment-neg'}.get(n['label'],'sentiment-neu')
+                st.markdown(f'''<div class="news-card">
+                    <span class="{scls}">[{n["label"].upper()}]</span>
+                    <a href="{n.get('url','#')}" target="_blank" class="news-title">{n["title"]}</a>
+                </div>''', unsafe_allow_html=True)
+
+    with t3:
+        st.components.v1.html(build_tradingview_market_news(), height=600)
 
 # ── PAGE: All Stocks ──────────────────────────────────────────────────────
 def page_all_stocks():
