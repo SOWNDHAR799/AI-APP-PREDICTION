@@ -7,7 +7,7 @@ HISTORY_FILE = "prediction_history.json"
 def save_prediction(prediction_data):
     """
     Saves a prediction to history.
-    prediction_data: dict with keys 'symbol', 'signal', 'confidence', 'price', 'timestamp', 'actual_result'
+    prediction_data: dict with keys 'symbol', 'signal', 'confidence', 'price', 'timestamp', 'catalyst'
     """
     history = load_history()
     
@@ -15,6 +15,10 @@ def save_prediction(prediction_data):
     if 'timestamp' not in prediction_data:
         prediction_data['timestamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
+    # Ensure catalyst exists
+    if 'catalyst' not in prediction_data:
+        prediction_data['catalyst'] = "Technical Analysis"
+        
     # Prepend to history
     history.insert(0, prediction_data)
     
@@ -33,39 +37,68 @@ def load_history():
         return []
     try:
         with open(HISTORY_FILE, "r") as f:
-            return json.load(f)
+            data = json.load(f)
+            # Migration: Ensure all old entries have 'catalyst'
+            for item in data:
+                if 'catalyst' not in item:
+                    item['catalyst'] = "Broad Market Trends"
+            return data
     except Exception:
         return []
 
-def load_accuracy():
+def load_advanced_stats():
     """
-    Calculates accuracy based on stored results.
-    Returns (accuracy_ratio, total_trades)
+    Step 7: Professional Track Record Engine.
+    Calculates detailed performance metrics.
     """
     history = load_history()
-    # Only count predictions that have an actual_result
     evaluated = [p for p in history if p.get('correct') is not None]
     
     if not evaluated:
-        return 0.0, 0
+        return {
+            "win_rate": 0.0, "total": 0, "avg_profit": 0.0, 
+            "avg_loss": 0.0, "profit_factor": 0.0, "rr_actual": 0.0
+        }
     
-    wins = sum(1 for p in evaluated if p['correct'])
+    wins = [p for p in evaluated if p['correct']]
+    losses = [p for p in evaluated if not p['correct']]
+    
     total = len(evaluated)
+    win_rate = len(wins) / total
     
-    return wins / total, total
+    # Calculate % returns based on price change
+    def get_ret(p):
+        entry = p.get('price', 0)
+        exit = p.get('actual_price', 0)
+        if entry == 0: return 0
+        ret = abs(exit - entry) / entry * 100
+        return ret
+
+    avg_win = sum(get_ret(w) for w in wins) / len(wins) if wins else 0.0
+    avg_loss = sum(get_ret(l) for l in losses) / len(losses) if losses else 0.0
+    
+    total_win_amt = sum(get_ret(w) for w in wins)
+    total_loss_amt = sum(get_ret(l) for l in losses)
+    profit_factor = total_win_amt / total_loss_amt if total_loss_amt > 0 else total_win_amt
+    
+    return {
+        "win_rate": win_rate * 100,
+        "total": total,
+        "avg_profit": avg_win,
+        "avg_loss": avg_loss,
+        "profit_factor": profit_factor,
+        "rr_actual": avg_win / avg_loss if avg_loss > 0 else 0.0
+    }
 
 def update_prediction_result(timestamp, actual_price):
     """
     Updates a past prediction with the actual price movement result.
-    This would be called when new data arrives to verify past signals.
     """
     history = load_history()
     updated = False
     
     for pred in history:
         if pred['timestamp'] == timestamp and pred.get('correct') is None:
-            # Logic to determine if prediction was correct
-            # For simplicity: if signal was BUY and price went up, correct=True
             entry_price = pred.get('price', 0)
             signal = pred.get('signal', '')
             
@@ -75,10 +108,52 @@ def update_prediction_result(timestamp, actual_price):
                 elif "SELL" in signal:
                     pred['correct'] = actual_price < entry_price
                 else:
-                    pred['correct'] = None # Neutral/Hold
-                updated = True
-                pred['actual_price'] = actual_price
+                    pred['correct'] = None 
+                
+                if pred['correct'] is not None:
+                    updated = True
+                    pred['actual_price'] = actual_price
     
     if updated:
         with open(HISTORY_FILE, "w") as f:
             json.dump(history, f, indent=4)
+
+def auto_verify_signals(price_fetcher_fn):
+    """
+    Automatically verifies pending signals by fetching current prices.
+    price_fetcher_fn: a function that takes a symbol and returns current price.
+    """
+    history = load_history()
+    pending = [p for p in history if p.get('correct') is None and "HOLD" not in p.get('signal', '') and "NO TRADE" not in p.get('signal', '')]
+    
+    if not pending:
+        return
+        
+    updated = False
+    for pred in pending:
+        # Check if enough time has passed (at least 30 mins) to avoid instant noise verification
+        try:
+            ts = datetime.strptime(pred['timestamp'], "%Y-%m-%d %H:%M:%S")
+            if (datetime.now() - ts).total_seconds() < 60: # 1 min to avoid instant noise
+                continue
+                
+            current_price = price_fetcher_fn(pred['symbol'])
+            if current_price:
+                entry_price = pred.get('price', 0)
+                signal = pred.get('signal', '')
+                
+                if "BUY" in signal:
+                    pred['correct'] = current_price > entry_price
+                elif "SELL" in signal:
+                    pred['correct'] = current_price < entry_price
+                
+                if pred.get('correct') is not None:
+                    pred['actual_price'] = current_price
+                    updated = True
+        except:
+            continue
+            
+    if updated:
+        with open(HISTORY_FILE, "w") as f:
+            json.dump(history, f, indent=4)
+
