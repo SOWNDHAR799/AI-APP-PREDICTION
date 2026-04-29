@@ -1102,36 +1102,70 @@ class AIEngine:
         self.save_model() # Persist after training
         return {'d1_acc': self.models[symbol]['d1']['acc'], 'd2_acc': self.models[symbol]['d2']['acc'], 'd3_acc': self.models[symbol]['d3']['acc'], 'd4_acc': self.models[symbol]['d4']['acc']}
 
-    def get_timeframe_status(self, df):
-        """Extracts technical status for a single timeframe dataframe."""
-        if df is None or len(df) < 20:
-            return {"trend": "Neutral", "rsi": 50, "pattern": "N/A", "score": 0.5}
+    def predict(self, symbol, prices, volumes, news_sent=0.0, tv_sent=0.0, intraday=False, df=None, df_1h=None, df_1d=None):
+        if symbol not in self.models:
+            if not self.load_model() or symbol not in self.models: return None
         
-        prices = df['Close'].dropna().values
-        rsi = self._rsi(prices)
-        ema9 = self._ema(prices, 9)
-        ema21 = self._ema(prices, 21)
-            # Step 1 (v3): Volatility Filter Check
+        sc = self.scalers[symbol]
+        
+        # 1. MTF Status Analysis
+        main_status = self.get_timeframe_status(df)
+        mtf_data = {}
+        if df_1h is not None: mtf_data["1h"] = self.get_timeframe_status(df_1h)
+        if df_1d is not None: mtf_data["1d"] = self.get_timeframe_status(df_1d)
+        
+        # 2. Global Index Momentum (correlation)
+        try:
+            g_df = yf.download('^GSPC', period='5d', interval='1d', progress=False)
+            if g_df is not None and not g_df.empty:
+                g_close = g_df['Close']
+                if isinstance(g_close, pd.DataFrame): g_close = g_close.iloc[:, 0]
+                g_mean_mom = g_close.pct_change().tail(1).values[0]
+            else: g_mean_mom = 0
+        except: g_mean_mom = 0
+        
+        # 3. Multi-Timeframe Alignment Logic
+        mtf_alignment = 1.0
+        is_conflict = False
+        if "1d" in mtf_data:
+            if mtf_data["1d"]["trend"] != main_status["trend"]: 
+                mtf_alignment *= 0.8
+                is_conflict = True
+        
+        # 4. Feature Extraction for current point
+        prices_arr = np.array(prices, dtype=float)
+        volumes_arr = np.array(volumes, dtype=float)
+        
+        # Global moms array for _features
+        g_moms = [g_mean_mom] * len(prices_arr)
+        f_latest = self._features(prices_arr, volumes_arr, len(prices_arr), global_moms=g_moms)
+        if f_latest is None: return None
+        
+        feat = sc.transform([f_latest])
+        
+        # 5. Prediction Ensemble
+        results = {}
+        labels = ['today', 'tomorrow', 'next_3_days', 'next_week']
+        steps = ['d1', 'd2', 'd3', 'd4']
+        
+        # Step 1 (v3): Volatility Filter Check
         vol_label, vol_mult = self.calculate_volatility_state(df)
         
         # Step 2 (v3): Prep Confidence Breakdown Flags
-        # Check volume confirmation (current vol > 120% of 20-period avg)
         v_curr = float(df['Volume'].iloc[-1])
         v_avg = df['Volume'].tail(20).mean()
         is_vol_strong = v_curr > (v_avg * 1.2)
         
-        # Check MTF Sync
         is_mtf_sync = False
         if "1d" in mtf_data and "1h" in mtf_data:
-            is_mtf_sync = mtf_data["1d"]["trend"] == mtf_data["1h"]["trend"] == main_status["trend"]
+            is_mtf_sync = (mtf_data["1d"]["trend"] == mtf_data["1h"]["trend"] == main_status["trend"])
+            if is_mtf_sync: mtf_alignment *= 1.2 # Bonus for sync
 
-        results = {'mtf_status': mtf_data, 'volatility': vol_label}
-        is_trending = f_latest[-1] > 0.5 # Last feature is trending flag
+        is_trending = f_latest[-1] > 0.5 
         
-        for label, step_key, feat in zip(labels, steps, feats):
+        for label, step_key in zip(labels, steps):
             m_set = self.models[symbol][step_key]
             
-            # 3-Class Probabilities: [-1, 0, 1]
             probs_rf = m_set['rf'].predict_proba(feat)[0]
             probs_gb = m_set['gb'].predict_proba(feat)[0]
             
@@ -1143,29 +1177,20 @@ class AIEngine:
             ml_side = 1 if p_buy > p_sell else -1
             
             # Base final score
-            final_score = (0.4 * raw_prob) + (0.4 * main_status['score']) + (0.2 * np.clip(g_mean_mom*5 + 0.5, 0, 1))
+            final_score = (0.3 * raw_prob) + (0.3 * main_status['score']) + (0.2 * abs(news_sent)) + (0.2 * abs(tv_sent))
             
-            # Applying Volatility Multiplier (Step 1 v3)
+            # Applying Multipliers
             final_score *= vol_mult
-            
-            # Regime Awareness & Alignment
             if not is_trending: final_score *= 0.85
             final_score *= mtf_alignment
             final_score = min(max(final_score, 0), 1)
             
-            # Decision Logic
-            HIGH_CONFIDENCE_THRESHOLD = 0.75
-            STRETCH_THRESHOLD = 0.60
-            
-            # Signal Logic (Step 4 v3)
+            # Signal Logic
             if vol_mult == 0: sig = "NO TRADE (Low Volatility)"
             elif is_conflict: sig = "NO TRADE (Trend Conflict)"
-            elif final_score >= HIGH_CONFIDENCE_THRESHOLD: sig = "STRONG BUY" if ml_side == 1 else "STRONG SELL"
-            elif final_score >= STRETCH_THRESHOLD: sig = "BUY" if ml_side == 1 else "SELL"
+            elif final_score >= 0.75: sig = "STRONG BUY" if ml_side == 1 else "STRONG SELL"
+            elif final_score >= 0.60: sig = "BUY" if ml_side == 1 else "SELL"
             else: sig = "NO TRADE (Low Confidence)"
-            
-            if not is_trending and final_score < 0.70 and vol_mult > 0 and not is_conflict:
-                sig = "NO TRADE (Ranging Market)"
             
             stars = 5 if final_score >= 0.85 else 4 if final_score >= 0.75 else 3 if final_score >= 0.65 else 2 if final_score >= 0.50 else 1
             
@@ -1180,7 +1205,34 @@ class AIEngine:
                     'Volatility OK': "PASS ✅" if vol_mult > 0 else "FAIL ❌"
                 }
             }
+        results['mtf_status'] = mtf_data
+        results['volatility'] = vol_label
         return results
+
+    def get_timeframe_status(self, df):
+        """Extracts technical status for a single timeframe dataframe."""
+        if df is None or len(df) < 20:
+            return {"trend": "Neutral", "rsi": 50, "pattern": "N/A", "score": 0.5}
+        
+        prices = df['Close'].dropna().values
+        rsi = self._rsi(prices)
+        ema9 = self._ema(prices, 9)
+        ema21 = self._ema(prices, 21)
+        
+        trend = "Bullish" if prices[-1] > ema21 else "Bearish"
+        
+        # Simple technical score (0 to 1)
+        score = 0.5
+        if trend == "Bullish": score += 0.2
+        else: score -= 0.2
+        
+        if 40 < rsi < 60: score += 0.1
+        elif rsi > 70: score -= 0.1 # Overbought
+        elif rsi < 30: score += 0.1 # Oversold
+        
+        return {"trend": trend, "rsi": round(rsi, 2), "score": round(score, 2)}
+
+
 
 
 # ── Charts ────────────────────────────────────────────────────────────────
