@@ -157,3 +157,5 @@ def auto_verify_signals(price_fetcher_fn):
         with open(HISTORY_FILE, "w") as f:
             json.dump(history, f, indent=4)
 
+# Alias for backward compatibility
+load_accuracy = load_advanced_stats
