@@ -1194,6 +1194,18 @@ def main():
         st.caption("✅ MoneyControl News")
         st.caption("✅ TradingView Insights")
         st.caption("✅ Screener.in Fundamentals")
+        st.markdown("---")
+        st.markdown("### 🚀 FINAL ROADMAP")
+        st.markdown("""
+        <div style="background: rgba(102,126,234,0.1); padding: 10px; border-radius: 10px; border: 1px solid rgba(102,126,234,0.2);">
+            <div style="font-size: 0.8rem; color: #e2e8f0; margin-bottom: 4px;">1. Backtesting ✅</div>
+            <div style="font-size: 0.8rem; color: #e2e8f0; margin-bottom: 4px;">2. Paper Trading ✅</div>
+            <div style="font-size: 0.8rem; color: #e2e8f0; margin-bottom: 4px;">3. Live Data API ✅</div>
+            <div style="font-size: 0.8rem; color: #e2e8f0; margin-bottom: 4px;">4. Risk Management ✅</div>
+            <div style="font-size: 0.8rem; color: #e2e8f0; margin-bottom: 4px;">5. Model Improvement ✅</div>
+            <div style="font-size: 0.8rem; color: #10b981; font-weight: 700;">6. UI Polish ✅</div>
+        </div>
+        """, unsafe_allow_html=True)
 
     if page == "🏠 Explore":
         page_explore()
@@ -1428,59 +1440,60 @@ def page_prediction():
                 ''', unsafe_allow_html=True)
 
                 if pred:
-                    # --- UNIFIED INTELLIGENCE LOGIC (V2: 5-Indicator) ---
+                    # --- INSTITUTIONAL CONSENSUS LOGIC (V3: Weighted Hierarchy) ---
+                    # 1. Component Sensing (-1.0 to 1.0)
                     res = detect_candle_pattern(df_run.tail(3))
                     pat_l = res["pattern"].lower()
                     
                     ai_s = pred["today"]["signal"]
-                    tv_str = "BUY" if tv_sentiment > 0.1 else "SELL" if tv_sentiment < -0.1 else "NEUTRAL"
-                    pat_str = "BULLISH" if ('bullish' in pat_l or 'hammer' in pat_l) else "BEARISH" if ('bearish' in pat_l or 'star' in pat_l) else "NEUTRAL"
-                    news_str = "BULLISH" if sent > 0.2 else "BEARISH" if sent < -0.2 else "NEUTRAL"
+                    up_p = pred["today"]["up_prob"]
+                    # AI Sense: Gradual based on probability
+                    ai_sense = (up_p - 0.5) / 0.4  # scale 0.6->1.0 to 0.25->1.25
+                    ai_sense = max(min(ai_sense, 1.0), -1.0) if ai_s != 'HOLD' else 0
                     
-                    # New Indicator: Global Market Bias
+                    tv_sense = max(min(tv_sentiment * 2, 1.0), -1.0)
+                    pat_sense = 1.0 if ('bullish' in pat_l or 'hammer' in pat_l) else -1.0 if ('bearish' in pat_l or 'star' in pat_l) else 0
+                    
+                    # Volume Sense (5% weight)
+                    vol_avg = df_run['Volume'].tail(20).mean()
+                    vol_curr = df_run.iloc[-1]['Volume']
+                    vol_sense = 1.0 if vol_curr > vol_avg * 1.5 else 0.5 if vol_curr > vol_avg else 0
+                    
+                    # Market Bias (30% weight) - Primary Driver
                     master_sent = get_master_market_sentiment()
-                    global_bias = "BULLISH" if master_sent['score'] > 0.1 else "BEARISH" if master_sent['score'] < -0.1 else "NEUTRAL"
-
-                    ai_pts = 4 if ai_s == 'BUY' else -4 if ai_s == 'SELL' else 0
-                    tv_pts = 2 if tv_str == "BUY" else -2 if tv_str == "SELL" else 0
-                    pat_pts = 1.5 if pat_str == "BULLISH" else -1.5 if pat_str == "BEARISH" else 0
-                    news_pts = 1.5 if news_str == "BULLISH" else -1.5 if news_str == "BEARISH" else 0
-                    global_pts = 2 if global_bias == "BULLISH" else -2 if global_bias == "BEARISH" else 0
+                    news_sense = max(min(master_sent['score'] * 4, 1.0), -1.0)
                     
-                    score = ai_pts + tv_pts + pat_pts + news_pts + global_pts
+                    # 2. Weighted Calculation
+                    # Weights: AI(35), News(30), Tech(20), Pat(10), Vol(5)
+                    w_ai, w_news, w_tech, w_pat, w_vol = 35, 30, 20, 10, 5
                     
-                    total_indicators = 5
-                    pointing_up = sum([1 for p in [ai_pts, tv_pts, pat_pts, news_pts, global_pts] if p > 0])
-                    pointing_down = sum([1 for p in [ai_pts, tv_pts, pat_pts, news_pts, global_pts] if p < 0])
-                    agreement_pct = (max(pointing_up, pointing_down) / total_indicators) * 100
+                    weighted_score = (ai_sense * w_ai) + (news_sense * w_news) + (tv_sense * w_tech) + (pat_sense * w_pat) + (vol_sense * w_vol)
+                    conviction = abs(weighted_score)
                     
-                    # CALIBRATION: Boost confidence to reach 80% on 4/5 or 5/5 agreement
-                    if agreement_pct >= 80:
-                        conf_boost = f"{(agreement_pct):.0f}%"
+                    # 3. Adaptive Risk Penalty (25% Soft Penalty if AI & News Conflict)
+                    has_conflict = False
+                    risk_desc = "AI and News catalysts are in alignment."
+                    if (ai_sense > 0.2 and news_sense < -0.2) or (ai_sense < -0.2 and news_sense > 0.2):
+                        has_conflict = True
+                        conviction *= 0.75  # 25% Reduction
+                        risk_desc = "⚠️ Conflict detected between AI technicals and News sentiment. Conviction reduced."
+                    elif conviction < 40:
+                        risk_desc = "Low trend strength detected. Market is currently sideways."
+                    elif conviction > 80:
+                        risk_desc = "Institutional Grade Trend: Strong alignment across all indicators."
+                        
+                    # 4. Final Signal Calibration
+                    if weighted_score >= 15: 
+                        fin_sig, fin_col = ("SUPREME BUY 🚀", "#00b386") if conviction > 75 else ("BUY 📈", "#10b981")
+                        act_desc = "Strong bullish momentum confirmed."
+                    elif weighted_score <= -15:
+                        fin_sig, fin_col = ("SUPREME SELL 💥", "#eb5b3c") if conviction > 75 else ("SELL 📉", "#ef4444")
+                        act_desc = "Heavy bearish pressure detected."
                     else:
-                        conf_boost = f"{agreement_pct:.0f}%"
-
-                    if score >= 5.0: fin_sig, fin_col, act_desc = "SUPREME BUY 🚀", "#00b386", "Unanimous alignment between Local & Global signals."
-                    elif score >= 2.5: fin_sig, fin_col, act_desc = "BUY 📈", "#10b981", "Overall bullish setup."
-                    elif score <= -5.0: fin_sig, fin_col, act_desc = "SUPREME SELL 💥", "#eb5b3c", "Strong bearish consensus globally."
-                    elif score <= -2.5: fin_sig, fin_col, act_desc = "SELL 📉", "#ef4444", "Bearish signals dominating."
-                    else: fin_sig, fin_col, act_desc = "WAIT / HOLD ⚖️", "#f59e0b", "Conflicting signals. Market indecision."
-
-                    drivers = []
-                    if abs(ai_pts) >= 4: drivers.append(f"AI ({ai_s})")
-                    if abs(tv_pts) >= 2: drivers.append(f"TV ({tv_str})")
-                    if abs(pat_pts) >= 1.5: drivers.append(f"Pattern ({pat_str})")
-                    if abs(news_pts) >= 1.5: drivers.append(f"News ({news_str})")
-                    if abs(global_pts) >= 2: drivers.append(f"Global ({global_bias})")
-                    driver_text = " + ".join(drivers) if drivers else "Mixed Indicators"
-
-                    if agreement_pct <= 50: insight = "⚠️ HIGH RISK: Conflicting market signals. Suggest waiting."
-                    elif agreement_pct >= 80: insight = f"🔥 HIGH CONFIDENCE ({agreement_pct}%): Strong alignment for {fin_sig}."
-                    else: insight = f"✅ Trend Sync: Signals are aligning at {agreement_pct}%."
+                        fin_sig, fin_col, act_desc = "WAIT / HOLD ⚖️", "#f59e0b", "Neutral range. Avoid fresh entries."
 
                     headlines_txt = ""
                     for h in master_sent['headlines'][:4]:
-                        h_col = '#10b981' if h.get('label') == 'positive' else '#ef4444' if h.get('label') == 'negative' else '#94a3b8'
                         headlines_txt += f"• {h['title'][:75]}...<br>"
                     
                     reason_news = master_sent['local_reason']

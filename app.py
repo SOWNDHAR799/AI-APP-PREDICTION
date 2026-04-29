@@ -18,7 +18,7 @@ import urllib.parse
 from bs4 import BeautifulSoup
 import joblib
 import os
-from prediction_tracker import save_prediction, load_history, load_accuracy
+from prediction_tracker import save_prediction, load_history, load_advanced_stats, auto_verify_signals
 warnings.filterwarnings('ignore')
 
 st.set_page_config(page_title="AI Market Predictor Pro", page_icon="🧠", layout="wide",
@@ -108,7 +108,7 @@ STOCK_MAP = {
     # ═══ IT & SOFTWARE ═══
     'MPHASIS': 'MPHASIS.NS', 'COFORGE': 'COFORGE.NS',
     'PERSISTENT': 'PERSISTENT.NS', 'HAPPSTMNDS': 'HAPPSTMNDS.NS',
-    'ZOMATO': 'ZOMATO.NS', 'PAYTM': 'PAYTM.NS',
+    'ZOMATO': 'ETERNAL.NS', 'PAYTM': 'PAYTM.NS',
     'NAUKRI': 'NAUKRI.NS', 'INFOEDGE': 'NAUKRI.NS',
     'ROUTE': 'ROUTE.NS', 'MAPMY': 'MAPMYINDIA.NS',
     'LATENTVIEW': 'LATENTVIEW.NS', 'NEWGEN': 'NEWGEN.NS',
@@ -164,7 +164,7 @@ STOCK_MAP = {
     'RELAXO': 'RELAXO.NS', 'PAGEIND': 'PAGEIND.NS',
     'TRENT': 'TRENT.NS', 'DMART': 'DMART.NS',
     'DEVYANI': 'DEVYANI.NS', 'JUBLFOOD': 'JUBLFOOD.NS',
-    'ZOMATO': 'ZOMATO.NS', 'SWIGGY': 'SWIGGY.NS',
+    'ZOMATO': 'ETERNAL.NS', 'SWIGGY': 'SWIGGY.NS',
     'PATANJALI': 'PATANJALI.NS',
 
     # ═══ CEMENT & CONSTRUCTION ═══
@@ -252,7 +252,7 @@ STOCK_MAP = {
     'TATA CONSUMER': 'TATACONSUM.NS', 'TATA COMM': 'TATACOMM.NS',
 
     # ═══ NEW-AGE TECH / STARTUPS ═══
-    'ZOMATO': 'ZOMATO.NS', 'PAYTM': 'PAYTM.NS',
+    'ZOMATO': 'ETERNAL.NS', 'PAYTM': 'PAYTM.NS',
     'NYKAA': 'NYKAA.NS', 'POLICYBZR': 'POLICYBZR.NS',
     'CARTRADE': 'CARTRADE.NS', 'DELHIVERY': 'DELHIVERY.NS',
     'MAPMYINDIA': 'MAPMYINDIA.NS',
@@ -1116,129 +1116,199 @@ class AIEngine:
     def get_timeframe_status(self, df):
         """Extracts technical status for a single timeframe dataframe."""
         if df is None or len(df) < 20:
-            return {"trend": "Neutral", "rsi": 50, "pattern": "N/A", "score": 0.5}
+            return {"trend": "Neutral", "rsi": 50, "pattern": "N/A", "score": 0.5, "pattern_score": 0.5}
         
         prices = df['Close'].dropna().values
         rsi = self._rsi(prices)
         ema9 = self._ema(prices, 9)
         ema21 = self._ema(prices, 21)
-        pat_res = detect_candle_pattern(df)
         
         trend = "Bullish" if ema9 > ema21 else "Bearish"
-        score = 0.5
-        if trend == "Bullish": score += 0.1
-        else: score -= 0.1
-        if rsi < 40: score += 0.1
-        elif rsi > 60: score -= 0.1
+        # Score mapping: 0.0 to 1.0 (0.5 is neutral)
+        score = 0.7 if trend == "Bullish" else 0.3
+        if rsi > 70: score -= 0.1  # Overbought penalty
+        if rsi < 30: score += 0.1  # Oversold boost
         
-        # Factor in pattern score if available
-        p_score = pat_res.get('score', 0.5)
-        final_score = (score * 0.7) + (p_score * 0.3)
+        pat = detect_candle_pattern(df)
+        p_score = pat.get('score', 0.5)
         
         return {
             "trend": trend,
             "rsi": round(rsi, 2),
-            "pattern": pat_res.get('pattern', 'Neutral'),
-            "score": round(final_score, 4)
+            "pattern": pat['pattern'],
+            "score": score,
+            "pattern_score": p_score
         }
 
     def predict(self, symbol, prices, volumes, news_sent=0.0, tv_sent=0.0, intraday=False, df=None, df_1h=None, df_1d=None):
+        """Institutional Predictor V3 - Consensus driven by AI, Technicals, and Global Sentiment"""
         if symbol not in self.models: return None
         
-        # Fetch latest global momentum for prediction bias
-        try:
-            g_df = yf.download(['^GSPC', '^IXIC'], period='5d', interval='1d', progress=False)
-            if isinstance(g_df.columns, pd.MultiIndex): g_close = g_df['Close']
-            else: g_close = g_df['Close']
-            g_mean_mom = g_close.pct_change().mean(axis=1).iloc[-1]
-            g_mom_arr = [g_mean_mom] * (len(prices) + 1)
-        except: g_mean_mom = 0; g_mom_arr = None
-
-        prices = np.array(prices, dtype=float); volumes = np.array(volumes, dtype=float)
+        # Step 1 (v3): Volatility Filter Check
+        vol_label, vol_mult = self.calculate_volatility_state(df)
         
-        f_latest = self._features(prices, volumes, len(prices), global_moms=g_mom_arr)
-        if f_latest is None: return None
-        Xs_latest = self.scalers[symbol].transform([f_latest])
-        
-        # Standard Prediction logic remains similar for individual days
-        steps = ['d1', 'd2', 'd4'] if intraday else ['d1', 'd1', 'd2']
-        feats = [Xs_latest, Xs_latest, Xs_latest] # Simplified for MTF consistency
-        labels = ['today', 'tomorrow', 'day_after']
-        
-        # Calculate scores for main DF
+        # Step 2 (v3): Multi-Timeframe Alignment
         main_status = self.get_timeframe_status(df)
+        mtf_data = {}
+        mtf_alignment = 1.0
         
-        # Multi-Timeframe Alignment
-        mtf_data = {"15m": main_status}
-        mtf_alignment = 1.0 # Multiplier
+        if df_1h is not None: mtf_data["1h"] = self.get_timeframe_status(df_1h)
+        if df_1d is not None: mtf_data["1d"] = self.get_timeframe_status(df_1d)
         
-        if df_1h is not None:
-            mtf_data["1h"] = self.get_timeframe_status(df_1h)
-        if df_1d is not None:
-            mtf_data["1d"] = self.get_timeframe_status(df_1d)
-            
-        # Alignment Logic: Compare Daily trend with Current (15m/Main)
+        # Check for conflict (Institutional Guardrail)
+        is_conflict = False
         if "1d" in mtf_data:
             if mtf_data["1d"]["trend"] != main_status["trend"]:
-                mtf_alignment = 0.8 # Penalty for trading against daily trend
-            else:
-                mtf_alignment = 1.1 # Reward for alignment
+                mtf_alignment = 0.75 # Penalty for trend mismatch
+                is_conflict = True
+        
+        # Step 3 (v3): Feature Extraction
+        try:
+            g_df = yf.download('^GSPC', period='5d', interval='1d', progress=False)
+            g_mean_mom = g_df['Close'].pct_change().mean().iloc[0] if not g_df.empty else 0
+        except: g_mean_mom = 0
+        
+        g_mom_arr = [g_mean_mom] * (len(prices) + 1)
+        f_latest = self._features(prices, volumes, len(prices), global_moms=g_mom_arr)
+        if f_latest is None: return None
+        
+        Xs_latest = self.scalers[symbol].transform([f_latest])
+        
+        # Window settings
+        steps = ['d1', 'd2', 'd4'] if intraday else ['d1', 'd2', 'd3']
+        feats = [Xs_latest, Xs_latest, Xs_latest]
+        labels = ['today', 'tomorrow', 'day_after']
+        
+        # Step 4 (v3): Prep Confidence Breakdown Flags
+        v_curr = float(df['Volume'].iloc[-1]) if df is not None else 0
+        v_avg = df['Volume'].tail(20).mean() if df is not None else 1
+        is_vol_strong = v_curr > (v_avg * 1.2)
+        
+        is_mtf_sync = False
+        if "1d" in mtf_data and "1h" in mtf_data:
+            is_mtf_sync = mtf_data["1d"]["trend"] == mtf_data["1h"]["trend"] == main_status["trend"]
+            if is_mtf_sync: mtf_alignment = 1.2 # Boost for perfect alignment
 
-        results = {'mtf_status': mtf_data}
-        is_trending = f_latest[-1] > 0.5 # Last feature is trending flag
+        results = {'mtf_status': mtf_data, 'volatility': vol_label}
+        is_trending = f_latest[12] > 0.5 # is_trending flag index in features (line 1051)
         
         for label, step_key, feat in zip(labels, steps, feats):
             m_set = self.models[symbol][step_key]
             
-            # 3-Class Probabilities: [-1, 0, 1]
+            # 3-Class Probabilities
             probs_rf = m_set['rf'].predict_proba(feat)[0]
             probs_gb = m_set['gb'].predict_proba(feat)[0]
             
-            # Ensure we handle classes correctly (some models might not see all classes in a small dataset)
             classes = list(m_set['rf'].classes_)
             p_buy = (probs_rf[classes.index(1)] + probs_gb[classes.index(1)]) / 2 if 1 in classes else 0
             p_sell = (probs_rf[classes.index(-1)] + probs_gb[classes.index(-1)]) / 2 if -1 in classes else 0
             
-            # Weighted Scoring: 50% ML, 30% Tech Status, 20% Convergence
             raw_prob = p_buy if p_buy > p_sell else p_sell
             ml_side = 1 if p_buy > p_sell else -1
             
-            # Base final score (Inject global sentiment bias)
-            final_score = (0.4 * raw_prob) + (0.4 * main_status['score']) + (0.2 * np.clip(g_mean_mom*5 + 0.5, 0, 1))
+            # Weighted Consensus (Phase 1 V3)
+            # 40% AI, 40% Technicals, 20% Global Sentiment/News
+            final_score = (0.4 * raw_prob) + (0.4 * main_status['score']) + (0.2 * np.clip(g_mean_mom*5 + 0.5 + 0.1*news_sent + 0.1*tv_sent, 0, 1))
             
-            # Regime Awareness: Penalty in Ranging markets
-            if not is_trending:
-                final_score *= 0.85
-            
-            # Alignment multiplier
+            # Applying Constraints
+            final_score *= vol_mult
+            if not is_trending: final_score *= 0.85
             final_score *= mtf_alignment
             final_score = min(max(final_score, 0), 1)
             
-            # Decision Logic (The 75% High-Precision Guardrail)
+            # Signal Logic
             HIGH_CONFIDENCE_THRESHOLD = 0.75
             STRETCH_THRESHOLD = 0.60
             
-            if final_score >= HIGH_CONFIDENCE_THRESHOLD:
-                sig = "STRONG BUY" if ml_side == 1 else "STRONG SELL"
-            elif final_score >= STRETCH_THRESHOLD:
-                sig = "BUY" if ml_side == 1 else "SELL"
-            else:
-                sig = "HOLD (Uncertain)"
+            if vol_mult == 0: sig = "NO TRADE (Low Volatility)"
+            elif is_conflict and final_score < 0.8: sig = "NO TRADE (Trend Conflict)"
+            elif final_score >= HIGH_CONFIDENCE_THRESHOLD: sig = "STRONG BUY" if ml_side == 1 else "STRONG SELL"
+            elif final_score >= STRETCH_THRESHOLD: sig = "BUY" if ml_side == 1 else "SELL"
+            else: sig = "NO TRADE (Low Confidence)"
             
-            # Logic Override: If trending flag is off and score is mediocre, HOLD
-            if not is_trending and final_score < 0.70:
-                sig = "HOLD (Ranging Market)"
+            stars = 5 if final_score >= 0.85 else 4 if final_score >= 0.75 else 3 if final_score >= 0.65 else 2 if final_score >= 0.50 else 1
             
             results[label] = {
-                'signal': sig, 
-                'confidence': round(final_score, 4), 
-                'ml_prob': round(raw_prob, 4),
-                'tech_score': main_status['score'],
-                'pattern_score': main_status['score'],
-                'rsi_val': main_status['rsi'],
-                'is_trending': is_trending
+                'signal': sig, 'confidence': round(final_score, 4), 'stars': stars,
+                'ml_prob': round(raw_prob, 4), 'tech_score': main_status['score'],
+                'pattern_score': main_status['pattern_score'],
+                'is_trending': is_trending,
+                'breakdown': {
+                    'Trend Alignment': "PASS ✅" if not is_conflict else "FAIL ❌",
+                    'Volume Confirm': "PASS ✅" if is_vol_strong else "FAIL ❌",
+                    'MTF Sync': "PASS ✅" if is_mtf_sync else "FAIL ❌",
+                    'Volatility OK': "PASS ✅" if vol_mult > 0 else "FAIL ❌"
+                }
             }
         return results
+
+    def calculate_risk_parameters(self, symbol, entry, signal, capital, risk_pct, reward_ratio=2, df=None):
+        """Step 1: Risk Engine - Calculates SL, Target, and Position Size"""
+        if entry <= 0: return {"entry": 0, "sl": 0, "target": 0, "pos_size": 0}
+        
+        risk_amt = capital * (risk_pct / 100)
+        atr = np.mean(np.abs(np.diff(df['Close'].tail(14)))) if df is not None and len(df) > 14 else entry * 0.01
+        
+        if "BUY" in signal:
+            sl = entry - (atr * 2.0)
+            if sl > entry * 0.99: sl = entry * 0.99
+            risk_per_share = entry - sl
+            target = entry + (risk_per_share * reward_ratio)
+        else:
+            sl = entry + (atr * 2.0)
+            if sl < entry * 1.01: sl = entry * 1.01
+            risk_per_share = sl - entry
+            target = entry - (risk_per_share * reward_ratio)
+            
+        pos_size = int(risk_amt / risk_per_share) if risk_per_share > 0 else 0
+        return {
+            "entry": round(entry, 2), "sl": round(sl, 2), "target": round(target, 2),
+            "risk_reward": f"1:{reward_ratio}", "pos_size": pos_size, "risk_amt": round(risk_amt, 2),
+            "profit_amt": risk_amt * reward_ratio
+        }
+
+    def detect_entry_timing(self, df):
+        """Step 3: Entry Timing Engine - Pullback (READY) vs Breakout (DETECTED)"""
+        if df is None or len(df) < 30: return "ANALYZING..."
+        c = float(df['Close'].iloc[-1])
+        v = float(df['Volume'].iloc[-1]); v_avg = df['Volume'].tail(20).mean()
+        ema21 = self._ema(df['Close'].values, 21)
+        high20 = df['High'].iloc[:-1].tail(20).max()
+        low20 = df['Low'].iloc[:-1].tail(20).min()
+        
+        if c > high20 and v > v_avg * 1.3: return "BREAKOUT (DETECTED) 🚀"
+        if c < low20 and v > v_avg * 1.3: return "BREAKDOWN (DETECTED) 📉"
+        if c > ema21 and (c - ema21)/ema21 < 0.005: return "PULLBACK (READY) ⏳"
+        return "CONSOLIDATING ⚖️"
+
+    def detect_liquidity(self, df):
+        """Step 5: Liquidity Logic - Identify institutional SL Clusters"""
+        if df is None or len(df) < 50: return "ZONE: NEUTRAL"
+        window = df.tail(60)
+        top_liq = window['High'].max(); bot_liq = window['Low'].min()
+        c = float(df['Close'].iloc[-1])
+        if c >= top_liq * 0.997: return "ABOVE APEX LIQUIDITY 🧲"
+        if c <= bot_liq * 1.003: return "BELOW BASE LIQUIDITY 🧲"
+        return "MID-ZONE LIQUIDITY"
+
+    def calculate_volatility_state(self, df):
+        """Step 1 (v3): Volatility Filter - ATR based stagnation detection"""
+        if df is None or len(df) < 50: return "NORMAL", 1.0
+        h, l, pc = df['High'].values, df['Low'].values, df['Close'].shift(1).values
+        tr = np.max([h-l, np.abs(h-pc), np.abs(l-pc)], axis=0)
+        atr_current = np.mean(tr[-14:]); atr_base = np.mean(tr[-50:])
+        if atr_current < (atr_base * 0.70): return "LOW (STAGNANT) ❄️", 0.0
+        if atr_current > (atr_base * 2.5): return "EXTREME (CHAOTIC) ☢️", 0.5
+        return "STABLE ✅", 1.0
+
+    def get_market_session(self):
+        """Step 4 (v3): Indian Market Session Awareness (IST)"""
+        now = datetime.now()
+        cur_time = now.time()
+        if time(9, 15) <= cur_time <= time(10, 30): return "OPENING VOLATILITY ⚡"
+        if time(12, 0) <= cur_time <= time(14, 0): return "MIDDAY STAGNATION 💤"
+        if time(14, 30) <= cur_time <= time(15, 30): return "CLOSING MOMENTUM 🚀"
+        return "REGULAR SESSION"
 
 
 # ── Charts ────────────────────────────────────────────────────────────────
@@ -1395,6 +1465,7 @@ def build_tradingview_profile_widget(symbol, mapped):
     </div>
     """
 
+
 def build_tradingview_news_widget(symbol, mapped):
     tv_sym = get_tv_symbol(symbol, mapped)
     return f"""
@@ -1466,11 +1537,12 @@ def get_market_status():
 # ══════════════════════════════════════════════════════════════════════════
 def main():
     status_text, status_color = get_market_status()
-    st.markdown(f'<div class="main-title">🧠 AI Market Predictor Pro</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="main-title">🧠 AI Market Predictor Pro <span style="font-size:0.8rem; background:#6366f1; color:white; padding:4px 12px; border-radius:20px; vertical-align:middle; margin-left:10px; border:1px solid rgba(255,255,255,0.2);">INSTITUTIONAL V3</span></div>', unsafe_allow_html=True)
     st.markdown(f'<div class="sub-title">Real-time BSE • NSE • MoneyControl — AI-Powered Predictions &nbsp;'
                 f'<span style="background:{status_color}; color:white; padding:2px 8px; border-radius:12px; font-size:0.75rem; font-weight:700;">{status_text}</span></div>', unsafe_allow_html=True)
 
-    if 'engine' not in st.session_state:
+    # Self-healing engine initialization: Re-instantiate if stale or missing methods
+    if 'engine' not in st.session_state or not hasattr(st.session_state.engine, 'predict'):
         st.session_state.engine = AIEngine()
 
     # ── Ticker Bar & Live Refresh ─────────────────────────────────────
@@ -1538,6 +1610,16 @@ def main():
             "📊 All Stocks", "🏆 Top Movers"
         ], key="page")
         st.markdown("---")
+        st.subheader("⚙️ Trading Settings")
+        capital = st.number_input("Trading Capital (₹)", value=100000, step=5000, key="risk_cap")
+        risk_pct = st.slider("Risk per Trade (%)", 0.5, 5.0, 1.0, 0.5, key="risk_pct")
+        reward_ratio = st.slider("Reward-to-Risk Ratio", 1.0, 10.0, 2.0, 0.5, key="reward_ratio")
+        
+        max_loss = capital * risk_pct / 100
+        target_profit = max_loss * reward_ratio
+        st.info(f"📉 Max Loss: ₹{max_loss:,.0f}\n\n💰 Target Profit: ₹{target_profit:,.0f}")
+        
+        st.markdown("---")
         st.caption("**Data Sources**")
         st.caption("✅ Yahoo Finance Live")
         st.caption("✅ MoneyControl News")
@@ -1603,10 +1685,124 @@ def build_tradingview_market_news():
     </div>
     """
 
+def render_sector_heatmap():
+    """Step 6: Sector Money Flow Engine"""
+    st.markdown('<div class="section-head">🔥 Sector Money Flow (Live Leaders)</div>', unsafe_allow_html=True)
+    
+    sectors = {
+        "Banking": {"emoji": "🏦", "stocks": ["HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS"]},
+        "IT": {"emoji": "💻", "stocks": ["TCS.NS", "INFY.NS", "HCLTECH.NS"]},
+        "Auto": {"emoji": "🚗", "stocks": ["TATAMOTORS.NS", "MARUTI.NS", "M&M.NS"]},
+        "Energy": {"emoji": "⚡", "stocks": ["RELIANCE.NS", "ONGC.NS", "BPCL.NS"]},
+        "Pharma": {"emoji": "💊", "stocks": ["SUNPHARMA.NS", "CIPLA.NS", "DRREDDY.NS"]}
+    }
+    
+    cols = st.columns(len(sectors))
+    
+    for i, (name, sdata) in enumerate(sectors.items()):
+        total_chg = 0
+        leaders = []
+        
+        for stock in sdata["stocks"]:
+            info = get_price_info(stock, 1)
+            if info:
+                total_chg += info['pct']
+                if info['pct'] > 0:
+                    leaders.append(f"{stock.split('.')[0]} 🔥")
+                else:
+                    leaders.append(f"{stock.split('.')[0]} ❄️")
+        
+        avg_chg = total_chg / len(sdata["stocks"]) if sdata["stocks"] else 0
+        status = "STRONG 🔥" if avg_chg > 0.5 else "WEAK ❌" if avg_chg < -0.5 else "NEUTRAL ⚖️"
+        color = "#00b386" if avg_chg > 0 else "#eb5b3c"
+        
+        with cols[i]:
+            st.markdown(f"""
+                <div style="background: {color}10; border: 1px solid {color}30; padding: 15px; border-radius: 12px; height: 160px;">
+                    <div style="font-size: 0.7rem; color: #94a3b8; text-transform: uppercase; font-weight: 700;">{sdata['emoji']} {name}</div>
+                    <div style="font-size: 1.2rem; font-weight: 900; color: {color}; margin: 5px 0;">{status}</div>
+                    <div style="font-size: 1.1rem; font-weight: 700; color: {color};">{avg_chg:+.2f}%</div>
+                    <div style="font-size: 0.65rem; color: #64748b; margin-top: 10px; border-top: 1px solid #334155; padding-top: 5px;">
+                        {' | '.join(leaders[:2])}
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
+
+def render_trade_proof():
+    """Step 5 (v3): Professional Proof Panel - Last 10 Trades"""
+    st.markdown('<div class="section-head">📑 Institutional Proof (Last 10 Signals)</div>', unsafe_allow_html=True)
+    
+    # Auto-verify signals using current price engine
+    auto_verify_signals(lambda sym: get_realtime_price(sym, STOCK_MAP.get(sym, sym)))
+    
+    history = load_history()
+    # Get last 10 
+    latest_10 = history[:10]
+    
+    if not latest_10:
+        st.info("No historical signals available yet.")
+        return
+        
+    cols = st.columns(min(len(latest_10), 5))
+    for i, trade in enumerate(latest_10):
+        if i >= 5: break # Only show top row for design cleanliness
+        
+        is_pending = trade.get('correct') is None and "HOLD" not in trade.get('signal', '') and "NO TRADE" not in trade.get('signal', '')
+        res_col = "#38bdf8" if is_pending else ("#10b981" if trade.get('correct') == True else "#ef4444" if trade.get('correct') == False else "#94a3b8")
+        res_text = "PENDING ⏳" if is_pending else ("WIN ✅" if trade.get('correct') == True else "LOSS ❌" if trade.get('correct') == False else "NEUTRAL ⚖️")
+        catalyst = trade.get('catalyst', 'Technical Consensus')
+        
+        with cols[i]:
+            st.markdown(f"""
+                <div style="background: {res_col}10; border: 1px solid {res_col}30; padding: 12px; border-radius: 10px; text-align: center; height: 160px; display: flex; flex-direction: column; justify-content: space-between;">
+                    <div>
+                        <div style="font-size: 0.7rem; color: #94a3b8; font-weight: 700;">{trade['symbol']}</div>
+                        <div style="font-size: 0.85rem; font-weight: 900; color: {res_col}; margin: 5px 0;">{res_text}</div>
+                    </div>
+                    <div style="font-size: 0.6rem; color: #cbd5e1; line-height: 1.2; margin: 5px 0; font-style: italic; overflow: hidden;">
+                        "{catalyst[:55]}..."
+                    </div>
+                    <div style="font-size: 0.55rem; color: #64748b;">{trade['timestamp'].split()[0]} | Conf: {int(trade.get('confidence', 0)*100)}%</div>
+                </div>
+            """, unsafe_allow_html=True)
 
 # ── PAGE: Explore (Groww-style) ───────────────────────────────────────────
 def page_explore():
-    # Watchlist / Recently Viewed
+    # 1. Advanced Heatmap
+    render_sector_heatmap()
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # 2. Institutional Track Record
+    stats = load_advanced_stats()
+    st.markdown(f'''
+        <div style="background:#0f172a; border-radius:15px; border:1px solid #334155; padding:20px; margin-bottom:25px;">
+            <div style="font-size:0.7rem; color:#94a3b8; text-transform:uppercase; font-weight:800; letter-spacing:1px; margin-bottom:15px;">🏅 Institutional Track Record</div>
+            <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:20px;">
+                <div style="text-align:center;">
+                    <div style="font-size:1.8rem; font-weight:950; color:#10b981;">{stats['win_rate']:.1f}%</div>
+                    <div style="font-size:0.6rem; color:#64748b; text-transform:uppercase;">Win Rate</div>
+                </div>
+                <div style="text-align:center;">
+                    <div style="font-size:1.8rem; font-weight:950; color:#38bdf8;">{stats['profit_factor']:.2f}</div>
+                    <div style="font-size:0.6rem; color:#64748b; text-transform:uppercase;">Profit Factor</div>
+                </div>
+                <div style="text-align:center;">
+                    <div style="font-size:1.8rem; font-weight:950; color:#00b386;">+{stats['avg_profit']:.1f}%</div>
+                    <div style="font-size:0.6rem; color:#64748b; text-transform:uppercase;">Avg Win</div>
+                </div>
+                <div style="text-align:center;">
+                    <div style="font-size:1.8rem; font-weight:950; color:#ef4444;">-{stats['avg_loss']:.1f}%</div>
+                    <div style="font-size:0.6rem; color:#64748b; text-transform:uppercase;">Avg Loss</div>
+                </div>
+            </div>
+        </div>
+    ''', unsafe_allow_html=True)
+    
+    # 3. Trade Proof
+    render_trade_proof()
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # 4. Watchlist
     st.markdown('<div class="section-head">📌 Watchlist</div>', unsafe_allow_html=True)
     row_html = '<div class="recent-row">'
     for sym in WATCHLIST_DEFAULT:
@@ -1617,6 +1813,7 @@ def page_explore():
                         f'<div class="{cls}">{info["pct"]:+.2f}%</div></div>')
     row_html += '</div>'
     st.markdown(row_html, unsafe_allow_html=True)
+
 
     # NEW: Market Pulse
     st.markdown('<div class="section-head">⚡ Market Pulse (Candlestick & UT Bot Alert)</div>', unsafe_allow_html=True)
@@ -1786,7 +1983,8 @@ def page_backtester():
 # ── PAGE: AI Prediction ──────────────────────────────────────────────────
 def page_prediction():
     # ── Accuracy Dashboard Header ─────────────────────────────────────
-    acc_ratio, total_trades = load_accuracy()
+    stats = load_advanced_stats()
+    acc_ratio, total_trades = stats['win_rate'], stats['total']
     st.markdown(f'''
         <div style="background: #1e293b; border: 1px solid #334155; padding: 15px; border-radius: 12px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; border-left: 6px solid #667eea;">
             <div>
@@ -1881,16 +2079,32 @@ def page_prediction():
                     res = st.session_state.engine.predict(symbol, prices, volumes, sent, tv_sent=tv_sentiment, intraday=is_intra, df=df_run, df_1h=df_1h, df_1d=df_1d)
                     st.session_state.pred_results = res
                     
+                    # NEW: Step 1, 3 & 5 Integration
+                    entry_price = live_price if live_price else float(df_run.iloc[-1]['Close'])
+                    timing = st.session_state.engine.detect_entry_timing(df_run)
+                    liquidity = st.session_state.engine.detect_liquidity(df_run)
+                    risk_params = st.session_state.engine.calculate_risk_parameters(
+                        symbol, entry_price, res['today']['signal'], 
+                        st.session_state.get('risk_cap', 100000), 
+                        st.session_state.get('risk_pct', 1.0),
+                        reward_ratio=st.session_state.get('reward_ratio', 2.0),
+                        df=df_run
+                    )
+                    
+                    st.session_state.pred_timing = timing
+                    st.session_state.pred_liquidity = liquidity
+                    st.session_state.pred_risk = risk_params
+                    
                     # Save prediction for future accuracy tracking
-                    if res and 'today' in res:
-                        save_prediction({
-                            'symbol': symbol,
-                            'signal': res['today']['signal'],
-                            'confidence': res['today']['confidence'],
-                            'price': live_price if live_price else float(df.iloc[-1]['Close']),
-                            'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            'correct': None
-                        })
+                    save_prediction({
+                        'symbol': symbol,
+                        'signal': res['today']['signal'],
+                        'confidence': res['today']['confidence'],
+                        'price': entry_price,
+                        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        'catalyst': st.session_state.get('pred_catalyst', 'Market Consensus'),
+                        'correct': None
+                    })
                 else:
                     st.error("AI Training failed due to insufficient data quality.")
             else: st.warning("Not enough intraday data to train AI.")
@@ -1903,6 +2117,17 @@ def page_prediction():
         symbol = st.session_state.last_sym
         is_intra = "Intraday" in st.session_state.get('last_mode','')
         headlines = st.session_state.get('pred_news_headlines', [])
+        today_sig = pred['today']['signal']
+        timing = st.session_state.get('pred_timing', 'N/A')
+        liq = st.session_state.get('pred_liquidity', 'N/A')
+        rp = st.session_state.get('pred_risk', {})
+        
+        # FIX: Define missing variables for UI rendering
+        timing = st.session_state.get('pred_timing', 'ANALYZING...')
+        liq = st.session_state.get('pred_liquidity', 'MID-ZONE LIQUIDITY')
+        rp = st.session_state.get('pred_risk', {})
+        today_sig = pred['today']['signal']
+
         
         # 1. LIVE HEADER CARD (Properly Aligned)
         live_price = get_realtime_price(symbol, mapped)
@@ -2056,28 +2281,152 @@ def page_prediction():
         with exp_col3:
             st.metric("Pattern Score", f"{today_res['pattern_score']:.1%}", help="Score from candlestick pattern recognition.")
 
-        # 8. SUPREME MASTER VERDICT (The Final Consolidated Decision)
+        # 8. INSTITUTIONAL CONVICTION DASHBOARD (v3 - Weighted Model)
         st.markdown('<br><hr><br>', unsafe_allow_html=True)
-        v_sig = today_res['signal']
-        v_conf = today_res['confidence']
         
-        # Color & Description Mapping
-        if "STRONG BUY" in v_sig: v_col, v_desc = "#00b386", "Very high confidence bullish signal. Multiple systems align."
-        elif "BUY" in v_sig: v_col, v_desc = "#10b981", "Moderate bullish momentum detected."
-        elif "STRONG SELL" in v_sig: v_col, v_desc = "#eb5b3c", "High conviction bearish signal. Caution advised."
-        elif "SELL" in v_sig: v_col, v_desc = "#ef4444", "Bearish trends outweighing technicals."
-        else: v_col, v_desc = "#f59e0b", "Neutral or low confidence signal. Market indecision."
+        # 1. Weights Configuration
+        W_AI, W_BIAS, W_TECH, W_PAT, W_VOL = 0.35, 0.30, 0.20, 0.10, 0.05
+        
+        # 2. Extract Signal Strengths (0.0 to 1.0)
+        today_res = pred['today']
+        global_sent = get_master_market_sentiment()
+        
+        s_ai = today_res['ml_prob']
+        s_bias = min(abs(global_sent['score']) * 4, 1.0) # Scaling sentiment to 1.0
+        s_tech = today_res['tech_score']
+        s_pat = today_res['pattern_score']
+        
+        vols = df['Volume'].dropna().values
+        vol_avg = np.mean(vols[-20:]) if len(vols) > 20 else 1.0
+        s_vol = min((vols[-1] / vol_avg) / 2.0, 1.0) if vol_avg > 0 else 0.5
 
-        reason_news = st.session_state.get('pred_catalyst', 'Market Momentum')
+        # 3. Directional Analysis
+        ai_dir = 1 if "BUY" in today_res['signal'] else -1
+        bias_dir = 1 if global_sent['score'] > 0.05 else -1 if global_sent['score'] < -0.05 else 0
         
+        # 4. Weighted Conviction Score
+        conviction_raw = (s_ai * W_AI) + (s_bias * W_BIAS) + (s_tech * W_TECH) + (s_pat * W_PAT) + (s_vol * W_VOL)
+        conviction_final = conviction_raw * 100
+        
+        # 5. Adaptive Risk Penalty (Soft Penalty instead of Hard Cap)
+        risk_level = "STABLE ✅"
+        risk_color = "#10b981"
+        risk_desc = "AI and Market Sentiment are in alignment."
+        
+        if ai_dir != bias_dir and bias_dir != 0:
+            conviction_final *= 0.75  # 25% Reduction for conflict
+            risk_level = "HIGH UNCERTAINTY ⚠️"
+            risk_color = "#f59e0b"
+            risk_desc = "Conflict between AI Trend and News Sentiment detected."
+            
+        # 6. Final Verdict Selection
+        if conviction_final >= 75: 
+            v_sig = "POWER BUY 🚀" if ai_dir == 1 else "POWER SELL 💥"
+            v_col = "#00b386" if ai_dir == 1 else "#eb5b3c"
+        elif conviction_final >= 50:
+            v_sig = "BUY 📈" if ai_dir == 1 else "SELL 📉"
+            v_col = "#10b981" if ai_dir == 1 else "#ef4444"
+        else:
+            v_sig = "HOLD ⚖️"
+            v_col = "#f59e0b"
+
+        # 8. Step 4 & 7: PRO-TRADER EXECUTION CARD (Tamil Summary + Plan B + Badges)
+        st.markdown('<br><hr><br>', unsafe_allow_html=True)
+        
+        # Step 4 (v3): Market Session Awareness
+        session_phase = st.session_state.engine.get_market_session()
+        
+        # Badge Styling (Step 7)
+        badge_html = ""
+        if "READY" in timing: badge_html = f'<span style="background:#f59e0b; color:white; padding:4px 10px; border-radius:6px; font-size:0.6rem; margin-right:8px;">READY</span>'
+        elif "DETECTED" in timing: badge_html = f'<span style="background:#10b981; color:white; padding:4px 10px; border-radius:6px; font-size:0.6rem; margin-right:8px;">DETECTED</span>'
+        
+        # Step 4 (v3): Quality Stars
+        stars_count = pred['today'].get('stars', 3)
+        stars_html = f'<span style="color:#fcd34d; font-size:1.2rem; margin-left:10px;">{"★" * stars_count}{"☆" * (5-stars_count)}</span>'
+        
+        # Step 2 (v3): Breakdown Panel
+        breakdown = pred['today'].get('breakdown', {})
+        bd_html = ""
+        for factor, state in breakdown.items():
+            f_col = "#10b981" if "PASS" in state else "#ef4444"
+            bd_html += f'<div style="display:flex; justify-content:space-between; font-size:0.75rem; margin-bottom:5px;"><span style="color:#94a3b8;">{factor}</span><span style="color:{f_col}; font-weight:700;">{state}</span></div>'
+
+        # Tamil Summary Logic (Step 3 v3: Professional Upgrade)
+        if "NO TRADE" in today_sig:
+            if "Volatility" in today_sig:
+                tamil_summary = "சந்தை தற்போது ஸ்திரத்தன்மையின்றி (Low Volatility) உள்ளது. முக்கியமான மூவ்மென்ட் வரும் வரை காத்திருக்கவும்."
+            else:
+                tamil_summary = "சந்தை தற்போது நிலையற்றதாக உள்ளது. வர்த்தகம் செய்வதற்கு உகந்த சூழல் இல்லை (NO TRADE)."
+            v_col = "#64748b"
+        elif "PULLBACK" in timing:
+            tamil_summary = f"விலை ஒரு வலுவான uptrend-இல் pullback மண்டலத்தை அடைந்துள்ளது. இது மீண்டும் மேலே நகரும் வாய்ப்பு அதிகம்."
+        elif "BREAKOUT" in timing:
+            tamil_summary = f"ஒரு முக்கியமான பிரேக்அவுட் (Breakout) உறுதி செய்யப்பட்டுள்ளது. பலமான ஏற்றம் அல்லது இறக்கம் எதிர்பார்க்கப்படுகிறது."
+        else:
+            tamil_summary = "சந்தையின் போக்கு சீராக உள்ளது. தொழில்நுட்ப காரணிகள் சாதகமாக உள்ளன (Institutional Alignment)."
+
         st.markdown(f'''
-            <div style="background: {v_col}15; border: 2px solid {v_col}; padding: 35px; border-radius: 20px; text-align: center; border-left: 10px solid {v_col}; margin-bottom:30px;">
-                <div style="background:{v_col}; color:white; padding:4px 15px; border-radius:30px; display:inline-block; font-size:0.75rem; font-weight:700; text-transform:uppercase;">Supreme AI Verdict</div>
-                <h1 style="margin:10px 0; color:{v_col}; font-size: 3.5rem; font-weight: 900; letter-spacing:-1px;">{v_sig}</h1>
-                <div style="font-size:1.5rem; color:{v_col}; font-weight:800; margin-bottom:10px;">Confidence: {v_conf:.1%}</div>
-                <div style="font-size:1.1rem; color:#f8fafc; font-weight:600;">{v_desc}</div>
-                <div style="background:rgba(0,0,0,0.2); padding:15px; border-radius:12px; border:1px dashed rgba(255,255,255,0.1); margin-top:20px; text-align:left; color:#cbd5e1; font-size:0.95rem;">
-                    <b>💡 Reason News:</b> {reason_news}
+            <div style="background: {v_col}10; border: 2px solid {v_col}; padding: 30px; border-radius: 20px; border-left: 10px solid {v_col}; margin-bottom:30px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                    <div style="display:flex; align-items:center;">
+                        {badge_html}
+                        <div style="background:{v_col}; color:white; padding:6px 15px; border-radius:30px; font-size:0.75rem; font-weight:800; text-transform:uppercase;">
+                            🤖 AI வர்த்தகத் திட்டம் (Execution Card)
+                        </div>
+                        {stars_html}
+                    </div>
+                    <div style="display:flex; gap:10px;">
+                        <div style="color:#6366f1; font-weight:700; font-size:0.75rem; background:rgba(99,102,241,0.1); padding:4px 12px; border-radius:10px; border:1px solid rgba(99,102,241,0.2);">{session_phase}</div>
+                        <div style="color:{v_col}; font-weight:800; font-size:0.85rem; background:rgba(255,255,255,0.05); padding:4px 12px; border-radius:10px;">{timing}</div>
+                        <div style="color:#94a3b8; font-weight:700; font-size:0.85rem; background:rgba(255,255,255,0.05); padding:4px 12px; border-radius:10px;">{liq}</div>
+                    </div>
+                </div>
+                
+                <div style="display:grid; grid-template-columns: 1.5fr 1fr; gap:25px; align-items:center;">
+                    <div>
+                        <h1 style="margin:0; color:{v_col}; font-size: 3.2rem; font-weight: 950; letter-spacing:-1px;">{today_sig}</h1>
+                        <div style="font-size:1.1rem; color:#94a3b8; font-weight:600; margin-top:10px;">{tamil_summary}</div>
+                    </div>
+                    
+                    <div style="background:rgba(0,0,0,0.3); padding:20px; border-radius:15px; border:1px solid rgba(255,255,255,0.05); text-align:left;">
+                        <div style="font-size:0.85rem; color:#64748b; margin-bottom:12px; font-weight:700; text-transform:uppercase;">Execution Levels</div>
+                        <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                            <span style="color:#94a3b8;">Entry</span>
+                            <span style="font-weight:800; color:#f8fafc;">₹{rp.get('entry', 0):,.2f}</span>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                            <span style="color:#94a3b8;">Stop Loss</span>
+                            <span style="font-weight:800; color:#ef4444;">₹{rp.get('sl', 0):,.2f}</span>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                            <span style="color:#94a3b8;">Target</span>
+                            <span style="font-weight:800; color:#10b981;">₹{rp.get('target', 0):,.2f}</span>
+                        </div>
+                        <hr style="border:0.5px solid #334155; margin:10px 0;">
+                        <div style="display:flex; justify-content:space-between; font-size:0.8rem;">
+                            <span style="color:#64748b;">Risk/Reward</span>
+                            <span style="color:#f8fafc; font-weight:700;">{rp.get('risk_reward', '1:2')}</span>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-top:4px;">
+                            <span style="color:#64748b;">Expected Profit</span>
+                            <span style="color:#10b981; font-weight:800;">₹{rp.get('profit_amt', 0):,.0f}</span>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-top:4px;">
+                            <span style="color:#64748b;">Quantity</span>
+                            <span style="color:#38bdf8; font-weight:700;">{rp.get('pos_size', 0)} Shares</span>
+                        </div>
+                        
+                        <div style="margin-top:20px; padding-top:10px; border-top:1px solid #334155;">
+                             <div style="font-size:0.65rem; color:#64748b; margin-bottom:10px; font-weight:700; text-transform:uppercase;">Confidence Breakdown</div>
+                             {bd_html}
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="margin-top:25px; padding:15px; background:rgba(239,68,68,0.1); border:1px dashed #ef4444; border-radius:10px;">
+                    <div style="color:#ef4444; font-size:0.75rem; font-weight:800; text-transform:uppercase; margin-bottom:4px;">⚠️ Plan B (Risk Exit)</div>
+                    <div style="color:#f8fafc; font-size:0.9rem;">Stop Loss அடிக்கப்பட்டால் உடனடியாக வெளியேறவும். வர்த்தகத்தை மாற்ற வேண்டாம் (Do not average).</div>
                 </div>
             </div>
         ''', unsafe_allow_html=True)
