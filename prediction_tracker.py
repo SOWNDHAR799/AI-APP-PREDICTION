@@ -140,12 +140,31 @@ def auto_verify_signals(price_fetcher_fn):
             current_price = price_fetcher_fn(pred['symbol'])
             if current_price:
                 entry_price = pred.get('price', 0)
+                target = pred.get('target', 0)
+                sl = pred.get('sl', 0)
                 signal = pred.get('signal', '')
                 
+                # Institutional Verification (Target vs SL)
                 if "BUY" in signal:
-                    pred['correct'] = current_price > entry_price
+                    if target > 0 and current_price >= target:
+                        pred['correct'] = True
+                        pred['status'] = "TARGET HIT 🎯"
+                    elif sl > 0 and current_price <= sl:
+                        pred['correct'] = False
+                        pred['status'] = "SL HIT 🛑"
+                    elif (datetime.now() - ts).total_seconds() > 86400: # After 24h, check direction
+                        pred['correct'] = current_price > entry_price
+                        pred['status'] = "WIN ✅" if pred['correct'] else "LOSS ❌"
                 elif "SELL" in signal:
-                    pred['correct'] = current_price < entry_price
+                    if target > 0 and current_price <= target:
+                        pred['correct'] = True
+                        pred['status'] = "TARGET HIT 🎯"
+                    elif sl > 0 and current_price >= sl:
+                        pred['correct'] = False
+                        pred['status'] = "SL HIT 🛑"
+                    elif (datetime.now() - ts).total_seconds() > 86400: # After 24h, check direction
+                        pred['correct'] = current_price < entry_price
+                        pred['status'] = "WIN ✅" if pred['correct'] else "LOSS ❌"
                 
                 if pred.get('correct') is not None:
                     pred['actual_price'] = current_price

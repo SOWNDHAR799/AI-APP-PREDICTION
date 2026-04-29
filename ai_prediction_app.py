@@ -1,7 +1,7 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.preprocessing import StandardScaler
@@ -896,18 +896,7 @@ def get_master_market_sentiment():
         "global_headlines": g_scored
     }
 
-@st.cache_data(ttl=900)
-def get_global_market_sentiment():
-    """Analyze overall sentiment for the Indian Market (Legacy Wrapper)"""
-    try:
-        news = fetch_market_news("Indian stock market Nifty Sensex today trends news")
-        score, scored_news, catalyst = analyze_news(news)
-        if score > 0.15: label, color = "POSITIVE 📈", "#10b981"
-        elif score < -0.15: label, color = "NEGATIVE 📉", "#ef4444"
-        else: label, color = "NEUTRAL ⚖️", "#94a3b8"
-        return {"label": label, "color": color, "reason": catalyst, "score": score, "headlines": scored_news[:3]}
-    except:
-        return {"label": "NEUTRAL ⚖️", "color": "#94a3b8", "reason": "Market Dynamics", "score": 0.0, "headlines": []}
+
 
 def get_stock_catalyst(symbol):
     """Wrapper to get a single catalyst string for UI display"""
@@ -1478,44 +1467,7 @@ def build_tradingview_profile_widget(symbol, mapped):
             
         return "REGULAR SESSION"
 
-def build_tradingview_news_widget(symbol, mapped):
-    tv_sym = get_tv_symbol(symbol, mapped)
-    return f"""
-    <div class="tradingview-widget-container">
-      <div class="tradingview-widget-container__widget"></div>
-      <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-timeline.js" async>
-      {{
-        "feedMode": "symbol",
-        "symbol": "{tv_sym}",
-        "isTransparent": false,
-        "displayMode": "regular",
-        "width": "100%",
-        "height": 450,
-        "colorTheme": "dark",
-        "locale": "en"
-      }}
-      </script>
-    </div>
-    """
 
-def build_tradingview_market_news():
-    return f"""
-    <div class="tradingview-widget-container">
-      <div class="tradingview-widget-container__widget"></div>
-      <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-timeline.js" async>
-      {{
-        "feedMode": "market",
-        "market": "stock",
-        "isTransparent": false,
-        "displayMode": "regular",
-        "width": "100%",
-        "height": 600,
-        "colorTheme": "dark",
-        "locale": "en"
-      }}
-      </script>
-    </div>
-    """
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1653,6 +1605,7 @@ def main():
         st.caption("**Risk Management Engine**")
         st.caption(f"📍 Position sizing is based on ₹{max_loss:,.0f} risk.")
         st.caption(f"📍 Targets are set at {reward_ratio}x your risk.")
+        st.caption("🤖 **Auto-Verification Active**: Tracking SL/Target hits.")
         
         st.markdown("---")
         st.caption("**Data Sources**")
@@ -1763,37 +1716,7 @@ def render_sector_heatmap():
                 </div>
             """, unsafe_allow_html=True)
 
-# ── PAGE: Explore (Groww-style) ───────────────────────────────────────────
-def page_explore():
-    # Advanced Heatmap
-    render_sector_heatmap()
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    # Step 7: Institutional Track Record
-    stats = load_advanced_stats()
-    st.markdown(f'''
-        <div style="background:#0f172a; border-radius:15px; border:1px solid #334155; padding:20px; margin-bottom:25px;">
-            <div style="font-size:0.7rem; color:#94a3b8; text-transform:uppercase; font-weight:800; letter-spacing:1px; margin-bottom:15px;">🏅 Institutional Track Record</div>
-            <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:20px;">
-                <div style="text-align:center;">
-                    <div style="font-size:1.8rem; font-weight:950; color:#10b981;">{stats['win_rate']:.1f}%</div>
-                    <div style="font-size:0.6rem; color:#64748b; text-transform:uppercase;">Win Rate</div>
-                </div>
-                <div style="text-align:center;">
-                    <div style="font-size:1.8rem; font-weight:950; color:#38bdf8;">{stats['profit_factor']:.2f}</div>
-                    <div style="font-size:0.6rem; color:#64748b; text-transform:uppercase;">Profit Factor</div>
-                </div>
-                <div style="text-align:center;">
-                    <div style="font-size:1.8rem; font-weight:950; color:#00b386;">+{stats['avg_profit']:.1f}%</div>
-                    <div style="font-size:0.6rem; color:#64748b; text-transform:uppercase;">Avg Win</div>
-                </div>
-                <div style="text-align:center;">
-                    <div style="font-size:1.8rem; font-weight:950; color:#ef4444;">-{stats['avg_loss']:.1f}%</div>
-                    <div style="font-size:0.6rem; color:#64748b; text-transform:uppercase;">Avg Loss</div>
-                </div>
-            </div>
-        </div>
-    ''', unsafe_allow_html=True)
+
 
 def render_trade_proof():
     """Step 5 (v3): Professional Proof Panel - Last 10 Trades"""
@@ -1816,7 +1739,12 @@ def render_trade_proof():
         
         is_pending = trade.get('correct') is None and "HOLD" not in trade.get('signal', '') and "NO TRADE" not in trade.get('signal', '')
         res_col = "#38bdf8" if is_pending else ("#10b981" if trade.get('correct') == True else "#ef4444" if trade.get('correct') == False else "#94a3b8")
-        res_text = "PENDING ⏳" if is_pending else ("WIN ✅" if trade.get('correct') == True else "LOSS ❌" if trade.get('correct') == False else "NEUTRAL ⚖️")
+        
+        # Priority: Specific Status (TARGET/SL) > Generic Label
+        if trade.get('status'):
+            res_text = trade['status']
+        else:
+            res_text = "PENDING ⏳" if is_pending else ("WIN ✅" if trade.get('correct') == True else "LOSS ❌" if trade.get('correct') == False else "NEUTRAL ⚖️")
         catalyst = trade.get('catalyst', 'Technical Consensus')
         
         with cols[i]:
@@ -1839,9 +1767,31 @@ def page_explore():
     render_sector_heatmap()
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # Track Record
+    # Step 7: Institutional Track Record (v3)
     stats = load_advanced_stats()
-    # ... stats HTML ...
+    st.markdown('\u003cdiv class="section-head"\u003e🏅 Institutional Track Record\u003c/div\u003e', unsafe_allow_html=True)
+    st.markdown(f'''
+        \u003cdiv style="background:#0f172a; border-radius:15px; border:1px solid #334155; padding:20px; margin-bottom:25px;"\u003e
+            \u003cdiv style="display:grid; grid-template-columns: repeat(4, 1fr); gap:20px;"\u003e
+                \u003cdiv style="text-align:center; background:#10b98110; border-radius:10px; padding:15px;"\u003e
+                    \u003cdiv style="font-size:2rem; font-weight:950; color:#10b981;"\u003e{stats['win_rate']:.1f}%\u003c/div\u003e
+                    \u003cdiv style="font-size:0.65rem; color:#64748b; text-transform:uppercase; letter-spacing:1px; margin-top:5px;"\u003e🎯 Win Rate\u003c/div\u003e
+                \u003c/div\u003e
+                \u003cdiv style="text-align:center; background:#38bdf810; border-radius:10px; padding:15px;"\u003e
+                    \u003cdiv style="font-size:2rem; font-weight:950; color:#38bdf8;"\u003e{stats['profit_factor']:.2f}x\u003c/div\u003e
+                    \u003cdiv style="font-size:0.65rem; color:#64748b; text-transform:uppercase; letter-spacing:1px; margin-top:5px;"\u003e📊 Profit Factor\u003c/div\u003e
+                \u003c/div\u003e
+                \u003cdiv style="text-align:center; background:#00b38610; border-radius:10px; padding:15px;"\u003e
+                    \u003cdiv style="font-size:2rem; font-weight:950; color:#00b386;"\u003e+{stats['avg_profit']:.1f}%\u003c/div\u003e
+                    \u003cdiv style="font-size:0.65rem; color:#64748b; text-transform:uppercase; letter-spacing:1px; margin-top:5px;"\u003e💰 Avg Win\u003c/div\u003e
+                \u003c/div\u003e
+                \u003cdiv style="text-align:center; background:#ef444410; border-radius:10px; padding:15px;"\u003e
+                    \u003cdiv style="font-size:2rem; font-weight:950; color:#ef4444;"\u003e-{stats['avg_loss']:.1f}%\u003c/div\u003e
+                    \u003cdiv style="font-size:0.65rem; color:#64748b; text-transform:uppercase; letter-spacing:1px; margin-top:5px;"\u003e🛡️ Avg Loss\u003c/div\u003e
+                \u003c/div\u003e
+            \u003c/div\u003e
+        \u003c/div\u003e
+    ''', unsafe_allow_html=True)
     
     # NEW: Trade Proof
     render_trade_proof()
@@ -2139,12 +2089,14 @@ def page_prediction():
                     st.session_state.pred_liquidity = liquidity
                     st.session_state.pred_risk = risk_params
                     
-                    # Save prediction for future accuracy tracking
+                    # Save prediction for future accuracy tracking (Institutional V3)
                     save_prediction({
                         'symbol': symbol,
                         'signal': res['today']['signal'],
                         'confidence': res['today']['confidence'],
                         'price': entry_price,
+                        'sl': risk_params.get('sl', 0),
+                        'target': risk_params.get('target', 0),
                         'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         'catalyst': st.session_state.get('pred_catalyst', 'Market Consensus'),
                         'correct': None
@@ -2367,6 +2319,55 @@ def page_prediction():
             v_sig = "HOLD ⚖️"
             v_col = "#f59e0b"
 
+        # 7. DISPLAY INSTITUTIONAL DASHBOARD (The missing output)
+        st.markdown(f'''
+            <div style="background: #0f172a; border: 1px solid #334155; padding: 25px; border-radius: 15px; margin-bottom: 20px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                    <div style="font-size:0.8rem; color:#94a3b8; text-transform:uppercase; font-weight:800; letter-spacing:1px;">🏛️ Institutional Conviction (V3)</div>
+                    <div style="background:{risk_color}20; color:{risk_color}; padding:4px 12px; border-radius:8px; font-size:0.7rem; font-weight:700;">{risk_level}</div>
+                </div>
+                
+                <div style="display:grid; grid-template-columns: 1fr 2fr; gap:30px; align-items:center;">
+                    <div style="text-align:center; border-right:1px solid #334155; padding-right:20px;">
+                        <div style="font-size:3rem; font-weight:950; color:{v_col}; line-height:1;">{conviction_final:.0f}%</div>
+                        <div style="font-size:0.65rem; color:#64748b; text-transform:uppercase; margin-top:5px; font-weight:700;">Confidence Score</div>
+                    </div>
+                    
+                    <div>
+                        <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                            <span style="color:#f8fafc; font-weight:800; font-size:1.1rem;">Verdict: {v_sig}</span>
+                            <span style="color:#94a3b8; font-size:0.75rem;">{risk_desc}</span>
+                        </div>
+                        <div style="background:#1e293b; height:12px; border-radius:10px; overflow:hidden; border:1px solid #334155;">
+                            <div style="background:linear-gradient(90deg, {v_col}88, {v_col}); width:{conviction_final}%; height:100%;"></div>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; margin-top:10px;">
+                            <div style="text-align:center;">
+                                <div style="font-size:0.6rem; color:#64748b;">AI Bias</div>
+                                <div style="font-size:0.75rem; color:#f8fafc; font-weight:700;">{s_ai:.0%}</div>
+                            </div>
+                            <div style="text-align:center;">
+                                <div style="font-size:0.6rem; color:#64748b;">Sentiment</div>
+                                <div style="font-size:0.75rem; color:#f8fafc; font-weight:700;">{s_bias:.0%}</div>
+                            </div>
+                            <div style="text-align:center;">
+                                <div style="font-size:0.6rem; color:#64748b;">Technical</div>
+                                <div style="font-size:0.75rem; color:#f8fafc; font-weight:700;">{s_tech:.0%}</div>
+                            </div>
+                            <div style="text-align:center;">
+                                <div style="font-size:0.6rem; color:#64748b;">Pattern</div>
+                                <div style="font-size:0.75rem; color:#f8fafc; font-weight:700;">{s_pat:.0%}</div>
+                            </div>
+                            <div style="text-align:center;">
+                                <div style="font-size:0.6rem; color:#64748b;">Volume</div>
+                                <div style="font-size:0.75rem; color:#f8fafc; font-weight:700;">{s_vol:.0%}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        ''', unsafe_allow_html=True)
+
         # 8. Step 4 & 7: PRO-TRADER EXECUTION CARD (Tamil Summary + Plan B + Badges)
         st.markdown('<br><hr><br>', unsafe_allow_html=True)
         
@@ -2422,7 +2423,7 @@ def page_prediction():
                 
                 <div style="display:grid; grid-template-columns: 1.5fr 1fr; gap:25px; align-items:center;">
                     <div>
-                        <h1 style="margin:0; color:{v_col}; font-size: 3.2rem; font-weight: 950; letter-spacing:-1px;">{today_sig}</h1>
+                        <h1 style="margin:0; color:{v_col}; font-size: 3.2rem; font-weight: 950; letter-spacing:-1px;">{v_sig}</h1>
                         <div style="font-size:1.1rem; color:#94a3b8; font-weight:600; margin-top:10px;">{tamil_summary}</div>
                     </div>
                     
@@ -2471,6 +2472,10 @@ def page_prediction():
                 </div>
             </div>
         ''', unsafe_allow_html=True)
+
+        # 9. Institutional Track Record (Proof)
+        st.markdown('<br><hr><br>', unsafe_allow_html=True)
+        render_trade_proof()
 # ── PAGE: Market News ─────────────────────────────────────────────────────
 def page_news():
     st.subheader("📰 Market News Hub")
