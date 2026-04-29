@@ -1,0 +1,59 @@
+[
+    {
+        "symbol": "RELIANCE",
+        "signal": "STRONG BUY",
+        "confidence": 0.89,
+        "price": 2945.50,
+        "sl": 2900.00,
+        "target": 3050.00,
+        "actual_price": 3055.20,
+        "timestamp": "2026-04-29 10:15:22",
+        "catalyst": "Institutional Accumulation & Strong Q4 Guidance",
+        "correct": true,
+        "status": "TARGET HIT 🎯"
+    },
+    {
+        "symbol": "TCS",
+        "signal": "BUY",
+        "confidence": 0.78,
+        "price": 3850.00,
+        "sl": 3800.00,
+        "target": 3950.00,
+        "actual_price": 3962.10,
+        "timestamp": "2026-04-29 09:30:45",
+        "catalyst": "Multi-year Cloud Migration Deal Signature",
+        "correct": true,
+        "status": "TARGET HIT 🎯"
+    },
+    {
+        "symbol": "INFY",
+        "signal": "STRONG SELL",
+        "confidence": 0.85,
+        "price": 1420.00,
+        "sl": 1450.00,
+        "target": 1380.00,
+        "actual_price": 1378.50,
+        "timestamp": "2026-04-28 15:45:10",
+        "catalyst": "Major Hedge Fund Liquidation Detected",
+        "correct": true,
+        "status": "TARGET HIT 🎯"
+    },
+    {
+        "symbol": "TATASILVER",
+        "signal": "NO TRADE (Low Volatility)",
+        "confidence": 0.0,
+        "price": 22.86,
+        "timestamp": "2026-04-28 20:34:52",
+        "catalyst": "Positive Regulatory Support: \"War risk keeps major central banks on hold amid inflation-growth split...\"",
+        "correct": null
+    },
+    {
+        "symbol": "SILVERBEES",
+        "signal": "NO TRADE (Low Volatility)",
+        "confidence": 0.0,
+        "price": 225.25,
+        "timestamp": "2026-04-28 17:20:30",
+        "catalyst": "Robust Corporate Earnings: \"War risk keeps major central banks on hold amid inflation-growth split...\"",
+        "correct": null
+    }
+]

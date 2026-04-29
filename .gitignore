@@ -18,7 +18,7 @@ tunnel_v3_final.log
 v3_final.log
 v3_tunnel.log
 firebase-debug.log
-prediction_history.json
+# prediction_history.json
 scratch/
 sowndhar/
 .devcontainer/
