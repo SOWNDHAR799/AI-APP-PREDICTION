@@ -2263,6 +2263,13 @@ def page_prediction():
 
         # 4. EXECUTIVE REASONING SECTION (Separated Indian & Global News)
         st.markdown('<div class="section-head">🧠 AI Sentiment Pulse (Local vs Global)</div>', unsafe_allow_html=True)
+        
+        catalyst = st.session_state.get('pred_catalyst', 'No major catalyst detected.')
+        st.markdown(f'''<div style="background: rgba(99,102,241,0.1); border: 1px solid rgba(99,102,241,0.3); border-left: 6px solid #6366f1; padding: 15px 20px; border-radius: 10px; margin-bottom: 20px;">
+<div style="font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; font-weight: 800; margin-bottom: 5px;">Unified Market Driver (Primary Reason)</div>
+<div style="font-size: 1.1rem; color: #f8fafc; font-weight: 600;">{catalyst}</div>
+</div>''', unsafe_allow_html=True)
+
         sc1, sc2 = st.columns(2)
         with sc1:
             st.markdown("### 🇮🇳 Indian Catalysts")
@@ -2448,7 +2455,6 @@ def page_prediction():
             tamil_summary = f"ஒரு முக்கியமான பிரேக்அவுட் (Breakout) உறுதி செய்யப்பட்டுள்ளது. பலமான ஏற்றம் அல்லது இறக்கம் எதிர்பார்க்கப்படுகிறது."
         else:
             tamil_summary = "சந்தையின் போக்கு சீராக உள்ளது. தொழில்நுட்ப காரணிகள் சாதகமாக உள்ளன (Institutional Alignment)."
-
         st.markdown(f'''<div style="background: {v_col}10; border: 2px solid {v_col}; padding: 30px; border-radius: 20px; border-left: 10px solid {v_col}; margin-bottom:30px;">
 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
 <div style="display:flex; align-items:center;">
