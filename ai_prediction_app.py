@@ -1197,6 +1197,7 @@ class AIEngine:
             results[label] = {
                 'signal': sig, 'confidence': round(final_score, 4), 'stars': stars,
                 'ml_prob': round(raw_prob, 4), 'tech_score': main_status['score'],
+                'pattern_score': 0.5,
                 'is_trending': is_trending,
                 'breakdown': {
                     'Trend Alignment': "PASS ✅" if not is_conflict else "FAIL ❌",
