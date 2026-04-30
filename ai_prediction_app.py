@@ -18,6 +18,7 @@ import urllib.parse
 from bs4 import BeautifulSoup
 import joblib
 import os
+import textwrap
 from prediction_tracker import save_prediction, load_history, load_advanced_stats, auto_verify_signals
 warnings.filterwarnings('ignore')
 
@@ -1977,7 +1978,6 @@ def page_backtester():
                 df = calculate_ut_bot(df)
                 prices = df['Close'].dropna().astype(float).tolist()
                 volumes = df['Volume'].dropna().astype(float).tolist()
-                
                 # Train/Load model
                 metrics = st.session_state.engine.train(symbol, prices, volumes)
                 
@@ -2032,18 +2032,16 @@ def page_prediction():
     # ── Accuracy Dashboard Header ─────────────────────────────────────
     stats = load_advanced_stats()
     acc_ratio, total_trades = stats['win_rate'], stats['total']
-    st.markdown(f'''
-        <div style="background: #1e293b; border: 1px solid #334155; padding: 15px; border-radius: 12px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; border-left: 6px solid #667eea;">
-            <div>
-                <div style="font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; font-weight: 700;">AI System Accuracy</div>
-                <div style="font-size: 1.5rem; font-weight: 900; color: #f8fafc;">{acc_ratio:.1%}</div>
-            </div>
-            <div style="text-align: right;">
-                <div style="font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; font-weight: 700;">Total Evaluated Signals</div>
-                <div style="font-size: 1.5rem; font-weight: 900; color: #f8fafc;">{total_trades}</div>
-            </div>
-        </div>
-    ''', unsafe_allow_html=True)
+    st.markdown(f'''<div style="background: #1e293b; border: 1px solid #334155; padding: 15px; border-radius: 12px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; border-left: 6px solid #667eea;">
+<div>
+<div style="font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; font-weight: 700;">AI System Accuracy</div>
+<div style="font-size: 1.5rem; font-weight: 900; color: #f8fafc;">{acc_ratio:.1%}</div>
+</div>
+<div style="text-align: right;">
+<div style="font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; font-weight: 700;">Total Evaluated Signals</div>
+<div style="font-size: 1.5rem; font-weight: 900; color: #f8fafc;">{total_trades}</div>
+</div>
+</div>''', unsafe_allow_html=True)
 
     st.subheader("🔮 AI Stock Prediction Engine (3-Day Forecast)")
     st.caption("This model analyzes historical trends, technical indicators, and news sentiment to predict if the price will go UP or DOWN for the next **3 days**.")
@@ -2182,24 +2180,22 @@ def page_prediction():
             ut_s = "BUY 🚀" if live_price > df.iloc[-1]['UT_Trail'] else "SELL 💥"
             ut_color = "#00b386" if "BUY" in ut_s else "#ef4444"
             
-            st.markdown(f"""
-                <div class="stock-card" style="padding:1.5rem; border-right: 12px solid {ut_color};">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <div>
-                            <div style="font-size:0.8rem; color:#94a3b8; text-transform:uppercase; font-weight:700;">Live Asset Analysis</div>
-                            <div class="name" style="font-size:1.8rem;">{symbol} <span style="font-size:0.9rem; color:#64748b;">({mapped})</span></div>
-                            <div class="price" style="font-size:2.5rem; font-weight:900;">{curr}{live_price:,.2f}</div>
-                            <div class="{'change-up' if chg>=0 else 'change-down'}" style="font-size:1.1rem; font-weight:700;">
-                                {'▲' if chg>=0 else '▼'} {chg:+,.2f} ({pct:+.2f}%)
-                            </div>
-                        </div>
-                        <div style="text-align:right;">
-                            <div style="font-size:0.75rem; color:#94a3b8; text-transform:uppercase; font-weight:800;">UT Bot Intelligence</div>
-                            <div style="font-size:2rem; color:{ut_color}; font-weight:950;">{ut_s}</div>
-                        </div>
-                    </div>
-                </div>
-            """, unsafe_allow_html=True)
+            st.markdown(f"""<div class="stock-card" style="padding:1.5rem; border-right: 12px solid {ut_color};">
+<div style="display:flex; justify-content:space-between; align-items:center;">
+<div>
+<div style="font-size:0.8rem; color:#94a3b8; text-transform:uppercase; font-weight:700;">Live Asset Analysis</div>
+<div class="name" style="font-size:1.8rem;">{symbol} <span style="font-size:0.9rem; color:#64748b;">({mapped})</span></div>
+<div class="price" style="font-size:2.5rem; font-weight:900;">{curr}{live_price:,.2f}</div>
+<div class="{'change-up' if chg>=0 else 'change-down'}" style="font-size:1.1rem; font-weight:700;">
+{'▲' if chg>=0 else '▼'} {chg:+,.2f} ({pct:+.2f}%)
+</div>
+</div>
+<div style="text-align:right;">
+<div style="font-size:0.75rem; color:#94a3b8; text-transform:uppercase; font-weight:800;">UT Bot Intelligence</div>
+<div style="font-size:2rem; color:{ut_color}; font-weight:950;">{ut_s}</div>
+</div>
+</div>
+</div>""", unsafe_allow_html=True)
 
         # 2. ANALYSIS TABS
         st.markdown('<div class="section-head">📺 Live Analytics Dashboard</div>', unsafe_allow_html=True)
@@ -2373,53 +2369,49 @@ def page_prediction():
             v_col = "#f59e0b"
 
         # 7. DISPLAY INSTITUTIONAL DASHBOARD (The missing output)
-        st.markdown(f'''
-            <div style="background: #0f172a; border: 1px solid #334155; padding: 25px; border-radius: 15px; margin-bottom: 20px;">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-                    <div style="font-size:0.8rem; color:#94a3b8; text-transform:uppercase; font-weight:800; letter-spacing:1px;">🏛️ Institutional Conviction (V3)</div>
-                    <div style="background:{risk_color}20; color:{risk_color}; padding:4px 12px; border-radius:8px; font-size:0.7rem; font-weight:700;">{risk_level}</div>
-                </div>
-                
-                <div style="display:grid; grid-template-columns: 1fr 2fr; gap:30px; align-items:center;">
-                    <div style="text-align:center; border-right:1px solid #334155; padding-right:20px;">
-                        <div style="font-size:3rem; font-weight:950; color:{v_col}; line-height:1;">{conviction_final:.0f}%</div>
-                        <div style="font-size:0.65rem; color:#64748b; text-transform:uppercase; margin-top:5px; font-weight:700;">Confidence Score</div>
-                    </div>
-                    
-                    <div>
-                        <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                            <span style="color:#f8fafc; font-weight:800; font-size:1.1rem;">Verdict: {v_sig}</span>
-                            <span style="color:#94a3b8; font-size:0.75rem;">{risk_desc}</span>
-                        </div>
-                        <div style="background:#1e293b; height:12px; border-radius:10px; overflow:hidden; border:1px solid #334155;">
-                            <div style="background:linear-gradient(90deg, {v_col}88, {v_col}); width:{conviction_final}%; height:100%;"></div>
-                        </div>
-                        <div style="display:flex; justify-content:space-between; margin-top:10px;">
-                            <div style="text-align:center;">
-                                <div style="font-size:0.6rem; color:#64748b;">AI Bias</div>
-                                <div style="font-size:0.75rem; color:#f8fafc; font-weight:700;">{s_ai:.0%}</div>
-                            </div>
-                            <div style="text-align:center;">
-                                <div style="font-size:0.6rem; color:#64748b;">Sentiment</div>
-                                <div style="font-size:0.75rem; color:#f8fafc; font-weight:700;">{s_bias:.0%}</div>
-                            </div>
-                            <div style="text-align:center;">
-                                <div style="font-size:0.6rem; color:#64748b;">Technical</div>
-                                <div style="font-size:0.75rem; color:#f8fafc; font-weight:700;">{s_tech:.0%}</div>
-                            </div>
-                            <div style="text-align:center;">
-                                <div style="font-size:0.6rem; color:#64748b;">Pattern</div>
-                                <div style="font-size:0.75rem; color:#f8fafc; font-weight:700;">{s_pat:.0%}</div>
-                            </div>
-                            <div style="text-align:center;">
-                                <div style="font-size:0.6rem; color:#64748b;">Volume</div>
-                                <div style="font-size:0.75rem; color:#f8fafc; font-weight:700;">{s_vol:.0%}</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        ''', unsafe_allow_html=True)
+        st.markdown(f'''<div style="background: #0f172a; border: 1px solid #334155; padding: 25px; border-radius: 15px; margin-bottom: 20px;">
+<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+<div style="font-size:0.8rem; color:#94a3b8; text-transform:uppercase; font-weight:800; letter-spacing:1px;">🏛️ Institutional Conviction (V3)</div>
+<div style="background:{risk_color}20; color:{risk_color}; padding:4px 12px; border-radius:8px; font-size:0.7rem; font-weight:700;">{risk_level}</div>
+</div>
+<div style="display:grid; grid-template-columns: 1fr 2fr; gap:30px; align-items:center;">
+<div style="text-align:center; border-right:1px solid #334155; padding-right:20px;">
+<div style="font-size:3rem; font-weight:950; color:{v_col}; line-height:1;">{conviction_final:.0f}%</div>
+<div style="font-size:0.65rem; color:#64748b; text-transform:uppercase; margin-top:5px; font-weight:700;">Confidence Score</div>
+</div>
+<div>
+<div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+<span style="color:#f8fafc; font-weight:800; font-size:1.1rem;">Verdict: {v_sig}</span>
+<span style="color:#94a3b8; font-size:0.75rem;">{risk_desc}</span>
+</div>
+<div style="background:#1e293b; height:12px; border-radius:10px; overflow:hidden; border:1px solid #334155;">
+<div style="background:linear-gradient(90deg, {v_col}88, {v_col}); width:{conviction_final}%; height:100%;"></div>
+</div>
+<div style="display:flex; justify-content:space-between; margin-top:10px;">
+<div style="text-align:center;">
+<div style="font-size:0.6rem; color:#64748b;">AI Bias</div>
+<div style="font-size:0.75rem; color:#f8fafc; font-weight:700;">{s_ai:.0%}</div>
+</div>
+<div style="text-align:center;">
+<div style="font-size:0.6rem; color:#64748b;">Sentiment</div>
+<div style="font-size:0.75rem; color:#f8fafc; font-weight:700;">{s_bias:.0%}</div>
+</div>
+<div style="text-align:center;">
+<div style="font-size:0.6rem; color:#64748b;">Technical</div>
+<div style="font-size:0.75rem; color:#f8fafc; font-weight:700;">{s_tech:.0%}</div>
+</div>
+<div style="text-align:center;">
+<div style="font-size:0.6rem; color:#64748b;">Pattern</div>
+<div style="font-size:0.75rem; color:#f8fafc; font-weight:700;">{s_pat:.0%}</div>
+</div>
+<div style="text-align:center;">
+<div style="font-size:0.6rem; color:#64748b;">Volume</div>
+<div style="font-size:0.75rem; color:#f8fafc; font-weight:700;">{s_vol:.0%}</div>
+</div>
+</div>
+</div>
+</div>
+</div>''', unsafe_allow_html=True)
 
         # 8. Step 4 & 7: PRO-TRADER EXECUTION CARD (Tamil Summary + Plan B + Badges)
         st.markdown('<br><hr><br>', unsafe_allow_html=True)
@@ -2457,74 +2449,68 @@ def page_prediction():
         else:
             tamil_summary = "சந்தையின் போக்கு சீராக உள்ளது. தொழில்நுட்ப காரணிகள் சாதகமாக உள்ளன (Institutional Alignment)."
 
-        st.markdown(f'''
-            <div style="background: {v_col}10; border: 2px solid {v_col}; padding: 30px; border-radius: 20px; border-left: 10px solid {v_col}; margin-bottom:30px;">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
-                    <div style="display:flex; align-items:center;">
-                        {badge_html}
-                        <div style="background:{v_col}; color:white; padding:6px 15px; border-radius:30px; font-size:0.75rem; font-weight:800; text-transform:uppercase;">
-                            🤖 AI வர்த்தகத் திட்டம் (Execution Card)
-                        </div>
-                        {stars_html}
-                    </div>
-                    <div style="display:flex; gap:10px;">
-                        <div style="color:#6366f1; font-weight:700; font-size:0.75rem; background:rgba(99,102,241,0.1); padding:4px 12px; border-radius:10px; border:1px solid rgba(99,102,241,0.2);">{session_phase}</div>
-                        <div style="color:{v_col}; font-weight:800; font-size:0.85rem; background:rgba(255,255,255,0.05); padding:4px 12px; border-radius:10px;">{timing}</div>
-                        <div style="color:#94a3b8; font-weight:700; font-size:0.85rem; background:rgba(255,255,255,0.05); padding:4px 12px; border-radius:10px;">{liq}</div>
-                    </div>
-                </div>
-                
-                <div style="display:grid; grid-template-columns: 1.5fr 1fr; gap:25px; align-items:center;">
-                    <div>
-                        <h1 style="margin:0; color:{v_col}; font-size: 3.2rem; font-weight: 950; letter-spacing:-1px;">{v_sig}</h1>
-                        <div style="font-size:1.1rem; color:#94a3b8; font-weight:600; margin-top:10px;">{tamil_summary}</div>
-                    </div>
-                    
-                    <div style="background:rgba(0,0,0,0.3); padding:20px; border-radius:15px; border:1px solid rgba(255,255,255,0.05); text-align:left;">
-                        <div style="font-size:0.85rem; color:#64748b; margin-bottom:12px; font-weight:700; text-transform:uppercase;">Execution Levels</div>
-                        <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                            <span style="color:#94a3b8;">Entry</span>
-                            <span style="font-weight:800; color:#f8fafc;">₹{rp.get('entry', 0):,.2f}</span>
-                        </div>
-                        <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                            <span style="color:#94a3b8;">Stop Loss</span>
-                            <span style="font-weight:800; color:#ef4444;">₹{rp.get('sl', 0):,.2f}</span>
-                        </div>
-                        <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                            <span style="color:#94a3b8;">Target</span>
-                            <span style="font-weight:800; color:#10b981;">₹{rp.get('target', 0):,.2f}</span>
-                        </div>
-                        <hr style="border:0.5px solid #334155; margin:10px 0;">
-                        <div style="display:flex; justify-content:space-between; font-size:0.8rem;">
-                            <span style="color:#64748b;">Risk Amount (Max Loss)</span>
-                            <span style="color:#ef4444; font-weight:800;">₹{rp.get('risk_amt', 0):,.0f}</span>
-                        </div>
-                        <div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-top:4px;">
-                            <span style="color:#64748b;">Reward (Target Profit)</span>
-                            <span style="color:#10b981; font-weight:800;">₹{rp.get('profit_amt', 0):,.0f}</span>
-                        </div>
-                        <div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-top:4px;">
-                            <span style="color:#64748b;">Quantity to Buy</span>
-                            <span style="color:#38bdf8; font-weight:800;">{rp.get('pos_size', 0)} Shares</span>
-                        </div>
-                        <div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-top:4px;">
-                            <span style="color:#64748b;">Risk/Reward Ratio</span>
-                            <span style="color:#f8fafc; font-weight:700;">{rp.get('risk_reward', '1:2')}</span>
-                        </div>
-                        
-                        <div style="margin-top:20px; padding-top:10px; border-top:1px solid #334155;">
-                             <div style="font-size:0.65rem; color:#64748b; margin-bottom:10px; font-weight:700; text-transform:uppercase;">Confidence Breakdown</div>
-                             {bd_html}
-                        </div>
-                    </div>
-                </div>
-                
-                <div style="margin-top:25px; padding:15px; background:rgba(239,68,68,0.1); border:1px dashed #ef4444; border-radius:10px;">
-                    <div style="color:#ef4444; font-size:0.75rem; font-weight:800; text-transform:uppercase; margin-bottom:4px;">⚠️ Plan B (Risk Exit)</div>
-                    <div style="color:#f8fafc; font-size:0.9rem;">Stop Loss அடிக்கப்பட்டால் உடனடியாக வெளியேறவும். வர்த்தகத்தை மாற்ற வேண்டாம் (Do not average).</div>
-                </div>
-            </div>
-        ''', unsafe_allow_html=True)
+        st.markdown(f'''<div style="background: {v_col}10; border: 2px solid {v_col}; padding: 30px; border-radius: 20px; border-left: 10px solid {v_col}; margin-bottom:30px;">
+<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+<div style="display:flex; align-items:center;">
+{badge_html}
+<div style="background:{v_col}; color:white; padding:6px 15px; border-radius:30px; font-size:0.75rem; font-weight:800; text-transform:uppercase;">
+🤖 AI வர்த்தகத் திட்டம் (Execution Card)
+</div>
+{stars_html}
+</div>
+<div style="display:flex; gap:10px;">
+<div style="color:#6366f1; font-weight:700; font-size:0.75rem; background:rgba(99,102,241,0.1); padding:4px 12px; border-radius:10px; border:1px solid rgba(99,102,241,0.2);">{session_phase}</div>
+<div style="color:{v_col}; font-weight:800; font-size:0.85rem; background:rgba(255,255,255,0.05); padding:4px 12px; border-radius:10px;">{timing}</div>
+<div style="color:#94a3b8; font-weight:700; font-size:0.85rem; background:rgba(255,255,255,0.05); padding:4px 12px; border-radius:10px;">{liq}</div>
+</div>
+</div>
+<div style="display:grid; grid-template-columns: 1.5fr 1fr; gap:25px; align-items:center;">
+<div>
+<h1 style="margin:0; color:{v_col}; font-size: 3.2rem; font-weight: 950; letter-spacing:-1px;">{v_sig}</h1>
+<div style="font-size:1.1rem; color:#94a3b8; font-weight:600; margin-top:10px;">{tamil_summary}</div>
+</div>
+<div style="background:rgba(0,0,0,0.3); padding:20px; border-radius:15px; border:1px solid rgba(255,255,255,0.05); text-align:left;">
+<div style="font-size:0.85rem; color:#64748b; margin-bottom:12px; font-weight:700; text-transform:uppercase;">Execution Levels</div>
+<div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+<span style="color:#94a3b8;">Entry</span>
+<span style="font-weight:800; color:#f8fafc;">₹{rp.get('entry', 0):,.2f}</span>
+</div>
+<div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+<span style="color:#94a3b8;">Stop Loss</span>
+<span style="font-weight:800; color:#ef4444;">₹{rp.get('sl', 0):,.2f}</span>
+</div>
+<div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+<span style="color:#94a3b8;">Target</span>
+<span style="font-weight:800; color:#10b981;">₹{rp.get('target', 0):,.2f}</span>
+</div>
+<hr style="border:0.5px solid #334155; margin:10px 0;">
+<div style="display:flex; justify-content:space-between; font-size:0.8rem;">
+<span style="color:#64748b;">Risk Amount (Max Loss)</span>
+<span style="color:#ef4444; font-weight:800;">₹{rp.get('risk_amt', 0):,.0f}</span>
+</div>
+<div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-top:4px;">
+<span style="color:#64748b;">Reward (Target Profit)</span>
+<span style="color:#10b981; font-weight:800;">₹{rp.get('profit_amt', 0):,.0f}</span>
+</div>
+<div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-top:4px;">
+<span style="color:#64748b;">Quantity to Buy</span>
+<span style="color:#38bdf8; font-weight:800;">{rp.get('pos_size', 0)} Shares</span>
+</div>
+<div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-top:4px;">
+<span style="color:#64748b;">Risk/Reward Ratio</span>
+<span style="color:#f8fafc; font-weight:700;">{rp.get('risk_reward', '1:2')}</span>
+</div>
+<div style="margin-top:20px; padding-top:10px; border-top:1px solid #334155;">
+<div style="font-size:0.65rem; color:#64748b; margin-bottom:10px; font-weight:700; text-transform:uppercase;">Confidence Breakdown</div>
+{bd_html}
+</div>
+</div>
+</div>
+<div style="margin-top:25px; padding:15px; background:rgba(239,68,68,0.1); border:1px dashed #ef4444; border-radius:10px;">
+<div style="color:#ef4444; font-size:0.75rem; font-weight:800; text-transform:uppercase; margin-bottom:4px;">⚠️ Plan B (Risk Exit)</div>
+<div style="color:#f8fafc; font-size:0.9rem;">Stop Loss அடிக்கப்பட்டால் உடனடியாக வெளியேறவும். வர்த்தகத்தை மாற்ற வேண்டாம் (Do not average).</div>
+</div>
+</div>''', unsafe_allow_html=True)
 
         # 9. Institutional Track Record (Proof)
         st.markdown('<br><hr><br>', unsafe_allow_html=True)
