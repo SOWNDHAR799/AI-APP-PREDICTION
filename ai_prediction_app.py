@@ -1230,7 +1230,7 @@ class AIEngine:
         elif rsi > 70: score -= 0.1 # Overbought
         elif rsi < 30: score += 0.1 # Oversold
         
-        return {"trend": trend, "rsi": round(rsi, 2), "score": round(score, 2)}
+        return {"trend": trend, "rsi": round(rsi, 2), "score": round(score, 2), "pattern": "N/A"}
     def calculate_risk_parameters(self, symbol, entry, signal, capital, risk_pct, reward_ratio=2, df=None):
         """Step 1: Risk Engine - Calculates SL, Target, and Position Size"""
         if entry <= 0: return None
