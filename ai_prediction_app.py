@@ -2261,8 +2261,8 @@ def page_prediction():
             s2 = pred["tomorrow"]["signal"]
             st.markdown(f'<div class="{sig_cls.get(s2, "signal-hold")}">{l2}<br><span style="font-size:1.5rem;">{sig_emoji.get(s2, "⚖️ HOLD")}</span><p style="font-size:0.75rem">Conf: {pred["tomorrow"]["confidence"]:.1%}</p></div>', unsafe_allow_html=True)
         with tc3: 
-            s3 = pred["day_after"]["signal"]
-            st.markdown(f'<div class="{sig_cls.get(s3, "signal-hold")}">{l3}<br><span style="font-size:1.5rem;">{sig_emoji.get(s3, "⚖️ HOLD")}</span><p style="font-size:0.75rem">Conf: {pred["day_after"]["confidence"]:.1%}</p></div>', unsafe_allow_html=True)
+            s3 = pred["next_3_days"]["signal"]
+            st.markdown(f'<div class="{sig_cls.get(s3, "signal-hold")}">{l3}<br><span style="font-size:1.5rem;">{sig_emoji.get(s3, "⚖️ HOLD")}</span><p style="font-size:0.75rem">Conf: {pred["next_3_days"]["confidence"]:.1%}</p></div>', unsafe_allow_html=True)
 
         # 4. EXECUTIVE REASONING SECTION (Separated Indian & Global News)
         st.markdown('<div class="section-head">🧠 AI Sentiment Pulse (Local vs Global)</div>', unsafe_allow_html=True)
