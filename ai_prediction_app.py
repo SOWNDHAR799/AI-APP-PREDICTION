@@ -1231,6 +1231,139 @@ class AIEngine:
         elif rsi < 30: score += 0.1 # Oversold
         
         return {"trend": trend, "rsi": round(rsi, 2), "score": round(score, 2)}
+    def calculate_risk_parameters(self, symbol, entry, signal, capital, risk_pct, reward_ratio=2, df=None):
+        """Step 1: Risk Engine - Calculates SL, Target, and Position Size"""
+        if entry <= 0: return None
+        
+        risk_amt = capital * (risk_pct / 100)
+        
+        # Calculate Volatility-based Stop Loss (using ATR approx)
+        atr = np.mean(np.abs(np.diff(df['Close'].tail(14)))) if df is not None and len(df) > 14 else entry * 0.01
+        
+        if "BUY" in signal:
+            # Stop Loss: Recent Swing Low or ATR-based
+            sl = entry - (atr * 1.5)
+            # Ensure SL is not too far (max 3%) or too close (min 0.5%)
+            if sl > entry * 0.995: sl = entry * 0.995
+            if sl < entry * 0.97: sl = entry * 0.97
+            
+            risk_per_share = entry - sl
+            target = entry + (risk_per_share * reward_ratio)
+        else:
+            # Stop Loss: Recent Swing High or ATR-based
+            sl = entry + (atr * 1.5)
+            if sl < entry * 1.005: sl = entry * 1.005
+            if sl > entry * 1.03: sl = entry * 1.03
+            
+            risk_per_share = sl - entry
+            target = entry - (risk_per_share * reward_ratio)
+            
+        pos_size = int(risk_amt / risk_per_share) if risk_per_share > 0 else 0
+        
+        return {
+            "entry": entry,
+            "sl": sl,
+            "target": target,
+            "risk_reward": f"1:{reward_ratio}",
+            "pos_size": pos_size,
+            "risk_amt": risk_amt,
+            "profit_amt": risk_amt * reward_ratio
+        }
+
+    def detect_entry_timing(self, df):
+        """Step 3: Entry Timing Engine - Pullback (READY) vs Breakout (DETECTED)"""
+        if df is None or len(df) < 30: return "ANALYZING..."
+        
+        c = float(df['Close'].iloc[-1])
+        v = float(df['Volume'].iloc[-1])
+        v_avg = df['Volume'].tail(20).mean()
+        
+        ema21 = self._ema(df['Close'].values, 21)
+        prev_ema21 = self._ema(df['Close'].values[:-1], 21)
+        
+        # High of the last 20 candles for breakout detection
+        high20 = df['High'].iloc[:-1].tail(20).max()
+        low20 = df['Low'].iloc[:-1].tail(20).min()
+        
+        # 1. Breakout Check
+        if c > high20 and v > v_avg * 1.3:
+            return "BREAKOUT (DETECTED) 🚀"
+        if c < low20 and v > v_avg * 1.3:
+            return "BREAKDOWN (DETECTED) 📉"
+            
+        # 2. Pullback Check
+        if ema21 > prev_ema21 and c > ema21: # Uptrend
+            dist = (c - ema21) / ema21
+            if dist < 0.008: return "PULLBACK (READY) ⏳"
+        elif ema21 < prev_ema21 and c < ema21: # Downtrend
+            dist = (ema21 - c) / ema21
+            if dist < 0.008: return "PULLBACK (READY) ⏳"
+            
+        return "CONSOLIDATING ⚖️"
+
+    def detect_liquidity(self, df):
+        """Step 5: Liquidity Logic - Identify institutional SL Clusters (Swing Highs/Lows)"""
+        if df is None or len(df) < 50: return "ZONE: NEUTRAL"
+        
+        # Use last 60 candles to find meaningful supply/demand zones (Liquidity)
+        window = df.tail(60)
+        top_liq = window['High'].max()
+        bot_liq = window['Low'].min()
+        
+        c = float(df['Close'].iloc[-1])
+        
+        # Proximity detection (within 0.3% of the extreme)
+        if c >= top_liq * 0.997:
+            return "ABOVE APEX LIQUIDITY 🧲"
+        elif c <= bot_liq * 1.003:
+            return "BELOW BASE LIQUIDITY 🧲"
+        
+        if c > top_liq * 0.985:
+            return "NEAR SUPPLY LIQUIDITY ⚠️"
+        if c < bot_liq * 1.015:
+            return "NEAR DEMAND LIQUIDITY ⚠️"
+            
+        return "MID-ZONE LIQUIDITY"
+
+    def calculate_volatility_state(self, df):
+        """Step 1 (v3): Volatility Filter - ATR based stagnation detection"""
+        if df is None or len(df) < 50: return "NORMAL", 1.0
+        
+        # True Range calculation
+        h, l, pc = df['High'].values, df['Low'].values, df['Close'].shift(1).values
+        tr = np.max([h-l, np.abs(h-pc), np.abs(l-pc)], axis=0)
+        
+        atr_current = np.mean(tr[-14:]) # 14-period ATR
+        atr_base = np.mean(tr[-50:])    # 50-period average volatility
+        
+        if atr_current < (atr_base * 0.75):
+            return "LOW (STAGNANT) ❄️", 0.0 # Signal multiplier = 0
+        if atr_current > (atr_base * 2.5):
+            return "EXTREME (CHAOTIC) ☢️", 0.5 # High risk penalty
+            
+        return "STABLE ✅", 1.0
+
+    def get_market_session(self):
+        """Step 4 (v3): Indian Market Session Awareness (IST)"""
+        now = datetime.now()
+        # Ensure we are in IST (Server time might be different, but for local use assuming IST or offset)
+        # Assuming system time is IST for this implementation
+        cur_time = now.time()
+        
+        if time(9, 15) <= cur_time <= time(10, 30):
+            return "OPENING VOLATILITY ⚡ (High Risk/High Reward)"
+        if time(12, 0) <= cur_time <= time(14, 0):
+            return "MIDDAY STAGNATION 💤 (Potential Sideways)"
+        if time(14, 30) <= cur_time <= time(15, 30):
+            return "CLOSING MOMENTUM 🚀 (Institutional Move)"
+        if cur_time > time(15, 30):
+            return "MARKET CLOSED 🌙"
+            
+        return "REGULAR SESSION"
+
+
+
+
 
 
 
@@ -1388,139 +1521,6 @@ def build_tradingview_profile_widget(symbol, mapped):
       </script>
     </div>
     """
-
-    def calculate_risk_parameters(self, symbol, entry, signal, capital, risk_pct, reward_ratio=2, df=None):
-        """Step 1: Risk Engine - Calculates SL, Target, and Position Size"""
-        if entry <= 0: return None
-        
-        risk_amt = capital * (risk_pct / 100)
-        
-        # Calculate Volatility-based Stop Loss (using ATR approx)
-        atr = np.mean(np.abs(np.diff(df['Close'].tail(14)))) if df is not None and len(df) > 14 else entry * 0.01
-        
-        if "BUY" in signal:
-            # Stop Loss: Recent Swing Low or ATR-based
-            sl = entry - (atr * 1.5)
-            # Ensure SL is not too far (max 3%) or too close (min 0.5%)
-            if sl > entry * 0.995: sl = entry * 0.995
-            if sl < entry * 0.97: sl = entry * 0.97
-            
-            risk_per_share = entry - sl
-            target = entry + (risk_per_share * reward_ratio)
-        else:
-            # Stop Loss: Recent Swing High or ATR-based
-            sl = entry + (atr * 1.5)
-            if sl < entry * 1.005: sl = entry * 1.005
-            if sl > entry * 1.03: sl = entry * 1.03
-            
-            risk_per_share = sl - entry
-            target = entry - (risk_per_share * reward_ratio)
-            
-        pos_size = int(risk_amt / risk_per_share) if risk_per_share > 0 else 0
-        
-        return {
-            "entry": entry,
-            "sl": sl,
-            "target": target,
-            "risk_reward": f"1:{reward_ratio}",
-            "pos_size": pos_size,
-            "risk_amt": risk_amt,
-            "profit_amt": risk_amt * reward_ratio
-        }
-
-    def detect_entry_timing(self, df):
-        """Step 3: Entry Timing Engine - Pullback (READY) vs Breakout (DETECTED)"""
-        if df is None or len(df) < 30: return "ANALYZING..."
-        
-        c = float(df['Close'].iloc[-1])
-        v = float(df['Volume'].iloc[-1])
-        v_avg = df['Volume'].tail(20).mean()
-        
-        ema21 = self._ema(df['Close'].values, 21)
-        prev_ema21 = self._ema(df['Close'].values[:-1], 21)
-        
-        # High of the last 20 candles for breakout detection
-        high20 = df['High'].iloc[:-1].tail(20).max()
-        low20 = df['Low'].iloc[:-1].tail(20).min()
-        
-        # 1. Breakout Check
-        if c > high20 and v > v_avg * 1.3:
-            return "BREAKOUT (DETECTED) 🚀"
-        if c < low20 and v > v_avg * 1.3:
-            return "BREAKDOWN (DETECTED) 📉"
-            
-        # 2. Pullback Check
-        if ema21 > prev_ema21 and c > ema21: # Uptrend
-            dist = (c - ema21) / ema21
-            if dist < 0.008: return "PULLBACK (READY) ⏳"
-        elif ema21 < prev_ema21 and c < ema21: # Downtrend
-            dist = (ema21 - c) / ema21
-            if dist < 0.008: return "PULLBACK (READY) ⏳"
-            
-        return "CONSOLIDATING ⚖️"
-
-    def detect_liquidity(self, df):
-        """Step 5: Liquidity Logic - Identify institutional SL Clusters (Swing Highs/Lows)"""
-        if df is None or len(df) < 50: return "ZONE: NEUTRAL"
-        
-        # Use last 60 candles to find meaningful supply/demand zones (Liquidity)
-        window = df.tail(60)
-        top_liq = window['High'].max()
-        bot_liq = window['Low'].min()
-        
-        c = float(df['Close'].iloc[-1])
-        
-        # Proximity detection (within 0.3% of the extreme)
-        if c >= top_liq * 0.997:
-            return "ABOVE APEX LIQUIDITY 🧲"
-        elif c <= bot_liq * 1.003:
-            return "BELOW BASE LIQUIDITY 🧲"
-        
-        if c > top_liq * 0.985:
-            return "NEAR SUPPLY LIQUIDITY ⚠️"
-        if c < bot_liq * 1.015:
-            return "NEAR DEMAND LIQUIDITY ⚠️"
-            
-        return "MID-ZONE LIQUIDITY"
-
-    def calculate_volatility_state(self, df):
-        """Step 1 (v3): Volatility Filter - ATR based stagnation detection"""
-        if df is None or len(df) < 50: return "NORMAL", 1.0
-        
-        # True Range calculation
-        h, l, pc = df['High'].values, df['Low'].values, df['Close'].shift(1).values
-        tr = np.max([h-l, np.abs(h-pc), np.abs(l-pc)], axis=0)
-        
-        atr_current = np.mean(tr[-14:]) # 14-period ATR
-        atr_base = np.mean(tr[-50:])    # 50-period average volatility
-        
-        if atr_current < (atr_base * 0.75):
-            return "LOW (STAGNANT) ❄️", 0.0 # Signal multiplier = 0
-        if atr_current > (atr_base * 2.5):
-            return "EXTREME (CHAOTIC) ☢️", 0.5 # High risk penalty
-            
-        return "STABLE ✅", 1.0
-
-    def get_market_session(self):
-        """Step 4 (v3): Indian Market Session Awareness (IST)"""
-        now = datetime.now()
-        # Ensure we are in IST (Server time might be different, but for local use assuming IST or offset)
-        # Assuming system time is IST for this implementation
-        cur_time = now.time()
-        
-        if time(9, 15) <= cur_time <= time(10, 30):
-            return "OPENING VOLATILITY ⚡ (High Risk/High Reward)"
-        if time(12, 0) <= cur_time <= time(14, 0):
-            return "MIDDAY STAGNATION 💤 (Potential Sideways)"
-        if time(14, 30) <= cur_time <= time(15, 30):
-            return "CLOSING MOMENTUM 🚀 (Institutional Move)"
-        if cur_time > time(15, 30):
-            return "MARKET CLOSED 🌙"
-            
-        return "REGULAR SESSION"
-
-
-
 
 # ══════════════════════════════════════════════════════════════════════════
 # HELPERS
