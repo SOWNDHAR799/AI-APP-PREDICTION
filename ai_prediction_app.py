@@ -1055,9 +1055,14 @@ class AIEngine:
         prices = np.array(prices, dtype=float); volumes = np.array(volumes, dtype=float)
         X, y1, y2, y3, y4 = [], [], [], [], []
         
-        # Triple Barrier Parameters
-        PROFIT_TARGET = 0.02 # 2% Profit
-        STOP_LOSS = 0.01    # 1% Stop Loss
+        # Adaptive Triple Barrier Parameters based on asset volatility
+        returns = np.abs(np.diff(prices) / prices[:-1])
+        avg_vol = np.mean(returns) if len(returns) > 0 else 0.01
+        
+        # Scale targets: More volatile stocks get wider targets, stable ETFs get tighter targets
+        # Min 0.8% target, Max 4% target
+        PROFIT_TARGET = max(0.008, min(0.04, avg_vol * 1.5))
+        STOP_LOSS = PROFIT_TARGET / 2.0
         
         for i in range(30, len(prices)-10):
             f = self._features(prices, volumes, i, global_moms=g_mom)
@@ -1116,14 +1121,18 @@ class AIEngine:
         if df_1d is not None: mtf_data["1d"] = self.get_timeframe_status(df_1d)
         
         # 2. Global Index Momentum (correlation)
-        try:
-            g_df = yf.download('^GSPC', period='5d', interval='1d', progress=False)
-            if g_df is not None and not g_df.empty:
-                g_close = g_df['Close']
-                if isinstance(g_close, pd.DataFrame): g_close = g_close.iloc[:, 0]
-                g_mean_mom = g_close.pct_change().tail(1).values[0]
-            else: g_mean_mom = 0
-        except: g_mean_mom = 0
+        if hasattr(self, '_cached_g_mom'):
+            g_mean_mom = self._cached_g_mom
+        else:
+            try:
+                g_df = yf.download('^GSPC', period='5d', interval='1d', progress=False)
+                if g_df is not None and not g_df.empty:
+                    g_close = g_df['Close']
+                    if isinstance(g_close, pd.DataFrame): g_close = g_close.iloc[:, 0]
+                    g_mean_mom = g_close.pct_change().tail(1).values[0]
+                else: g_mean_mom = 0
+            except: g_mean_mom = 0
+            self._cached_g_mom = g_mean_mom
         
         # 3. Multi-Timeframe Alignment Logic
         mtf_alignment = 1.0
@@ -1177,20 +1186,33 @@ class AIEngine:
             raw_prob = p_buy if p_buy > p_sell else p_sell
             ml_side = 1 if p_buy > p_sell else -1
             
-            # Base final score
-            final_score = (0.3 * raw_prob) + (0.3 * main_status['score']) + (0.2 * abs(news_sent)) + (0.2 * abs(tv_sent))
+            # Base final score (Dynamic Weights for Backtesting vs Live)
+            w_ml, w_tech, w_news, w_tv = 0.35, 0.35, 0.15, 0.15
+            score_sum = (w_ml * raw_prob) + (w_tech * main_status['score'])
+            denominator = w_ml + w_tech
+            
+            # Only add sentiment weights if data is actually present (above neutral threshold)
+            if abs(news_sent) > 0.01:
+                score_sum += w_news * abs(news_sent)
+                denominator += w_news
+            
+            if abs(tv_sent) > 0.01:
+                score_sum += w_tv * abs(tv_sent)
+                denominator += w_tv
+                
+            final_score = score_sum / denominator if denominator > 0 else 0
             
             # Applying Multipliers
             final_score *= vol_mult
-            if not is_trending: final_score *= 0.85
+            if not is_trending: final_score *= 0.95 # Minimal penalty for non-trending if other scores are high
             final_score *= mtf_alignment
             final_score = min(max(final_score, 0), 1)
             
             # Signal Logic
-            if vol_mult == 0: sig = "NO TRADE (Low Volatility)"
+            if vol_mult <= 0.1: sig = "NO TRADE (Low Volatility)"
             elif is_conflict: sig = "NO TRADE (Trend Conflict)"
-            elif final_score >= 0.75: sig = "STRONG BUY" if ml_side == 1 else "STRONG SELL"
-            elif final_score >= 0.60: sig = "BUY" if ml_side == 1 else "SELL"
+            elif final_score >= 0.65: sig = "STRONG BUY" if ml_side == 1 else "STRONG SELL"
+            elif final_score >= 0.40: sig = "BUY" if ml_side == 1 else "SELL"
             else: sig = "NO TRADE (Low Confidence)"
             
             stars = 5 if final_score >= 0.85 else 4 if final_score >= 0.75 else 3 if final_score >= 0.65 else 2 if final_score >= 0.50 else 1
@@ -1338,10 +1360,11 @@ class AIEngine:
         atr_current = np.mean(tr[-14:]) # 14-period ATR
         atr_base = np.mean(tr[-50:])    # 50-period average volatility
         
-        if atr_current < (atr_base * 0.75):
-            return "LOW (STAGNANT) ❄️", 0.0 # Signal multiplier = 0
-        if atr_current > (atr_base * 2.5):
-            return "EXTREME (CHAOTIC) ☢️", 0.5 # High risk penalty
+        if atr_current < (atr_base * 0.70):
+            # Reduced penalty: Allow 0.7 multiplier to let strong trends through
+            return "LOW (STAGNANT) ❄️", 0.7 
+        if atr_current > (atr_base * 3.0):
+            return "EXTREME (CHAOTIC) ☢️", 0.4 # Slightly lower multiplier for extreme chaos
             
         return "STABLE ✅", 1.0
 
@@ -1980,14 +2003,18 @@ def page_backtester():
                 volumes = df['Volume'].dropna().astype(float).tolist()
                 # Train/Load model
                 metrics = st.session_state.engine.train(symbol, prices, volumes)
+                if not metrics:
+                    st.error("AI Training failed. Not enough historical patterns found for this stock. Try a more volatile symbol.")
+                    return
                 
                 results = []
                 # Simulate last 60 trading days
                 test_len = 60
                 wins = 0
                 trades = 0
-                
+                prog = st.progress(0, text="Simulating trades...")
                 for i in range(len(df) - test_len, len(df) - 5):
+                    prog.progress((i - (len(df)-test_len)) / (test_len - 5), text=f"Simulating Day {i}...")
                     # Slice data up to point i
                     sub_df = df.iloc[:i]
                     sub_prices = sub_df['Close'].tolist()
@@ -2000,6 +2027,7 @@ def page_backtester():
                         if "BUY" in sig or "SELL" in sig:
                             trades += 1
                             entry_price = float(df.iloc[i]['Close'])
+                            # Peek ahead for results (3 days later)
                             future_price = float(df.iloc[i+3]['Close'])
                             
                             correct = False
@@ -2014,6 +2042,13 @@ def page_backtester():
                                 'Entry': entry_price,
                                 'Result': '✅ WIN' if correct else '❌ LOSS'
                             })
+                        else:
+                            pass
+                    else:
+                        # Skip if prediction engine failed
+                        pass
+                
+                prog.empty()
                 
                 # Render Results
                 if trades > 0:
@@ -2023,9 +2058,9 @@ def page_backtester():
                     
                     st.dataframe(pd.DataFrame(results), use_container_width=True)
                 else:
-                    st.warning("Model generated no signals during the simulation period.")
+                    st.warning("Model generated no signals during the simulation period. The AI didn't find high-probability entry points within its confidence threshold (40%+). Try increasing the simulation period or another stock.")
             else:
-                st.error("Insufficient data for backtesting. Try another symbol.")
+                st.error("Insufficient data for backtesting. Try another symbol (need at least 100 days of history).")
 
 # ── PAGE: AI Prediction ──────────────────────────────────────────────────
 def page_prediction():
